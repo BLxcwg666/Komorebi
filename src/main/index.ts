@@ -40,6 +40,7 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
 };
 
 const dataDir = path.join(LiteLoader.path.data, PLUGIN_SLUG);
+const imageDir = path.join(dataDir, 'images');
 const dbFilePath = path.join(dataDir, 'recalled-messages.json');
 
 let config: AntiRecallConfig = loadConfig();
@@ -238,7 +239,8 @@ function rememberRecalled(record: StoredMessage): void {
 function readPersistedMessage(id: string): StoredMessage | undefined {
   if (!config.saveDb) return undefined;
   ensurePersistedMessagesLoaded();
-  return persistedMessages?.[id];
+  const record = persistedMessages?.[id];
+  return record ? hydratePersistedMessage(record) : undefined;
 }
 
 function savePersistedMessage(record: StoredMessage): void {
@@ -246,7 +248,7 @@ function savePersistedMessage(record: StoredMessage): void {
   ensurePersistedMessagesLoaded();
   if (!persistedMessages || persistedMessages[record.id]) return;
 
-  persistedMessages[record.id] = record;
+  persistedMessages[record.id] = persistMessageAssets(record);
   flushPersistedMessages();
 }
 
@@ -283,6 +285,106 @@ function getStorageStats(): { enabled: boolean; count: number; size: number; pat
     size,
     path: dbFilePath,
   };
+}
+
+function persistMessageAssets(record: StoredMessage): StoredMessage {
+  const cloned = cloneStoredMessage(record);
+  const elements = Array.isArray(cloned.msg.elements) ? cloned.msg.elements : [];
+  const originalElements = Array.isArray(record.msg.elements) ? record.msg.elements : [];
+
+  for (let index = 0; index < elements.length; index++) {
+    const element = asRecord(elements[index]);
+    const picElement = asRecord(element?.picElement);
+    const originalElement = asRecord(originalElements[index]);
+    const originalPicElement = asRecord(originalElement?.picElement);
+    if (!picElement) continue;
+
+    const sourcePath = findExistingImagePath(originalPicElement ?? picElement);
+    if (!sourcePath) continue;
+
+    const ext = path.extname(sourcePath) || '.jpg';
+    const imagePath = path.join(imageDir, `${record.id}-${index}${ext}`);
+
+    try {
+      fs.mkdirSync(imageDir, { recursive: true });
+      if (!fs.existsSync(imagePath)) fs.copyFileSync(sourcePath, imagePath);
+
+      picElement.sourcePath = imagePath;
+      picElement.__komorebiSavedPath = imagePath;
+      picElement.thumbPath = { 0: imagePath, 198: imagePath, 720: imagePath };
+    } catch (error) {
+      log('Failed to persist recalled image:', error);
+    }
+  }
+
+  return cloned;
+}
+
+function hydratePersistedMessage(record: StoredMessage): StoredMessage {
+  const cloned = cloneStoredMessage(record);
+  const elements = Array.isArray(cloned.msg.elements) ? cloned.msg.elements : [];
+
+  for (const rawElement of elements) {
+    const element = asRecord(rawElement);
+    const picElement = asRecord(element?.picElement);
+    const savedPath = typeof picElement?.__komorebiSavedPath === 'string' ? picElement.__komorebiSavedPath : undefined;
+    if (!picElement || !savedPath || !fs.existsSync(savedPath)) continue;
+
+    picElement.sourcePath = savedPath;
+    picElement.thumbPath = new Map<number, string>([
+      [0, savedPath],
+      [198, savedPath],
+      [720, savedPath],
+    ]);
+  }
+
+  return cloned;
+}
+
+function findExistingImagePath(picElement: QQPayloadWrapper): string | undefined {
+  return collectImagePathCandidates(picElement).find(candidate => {
+    try {
+      return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
+function collectImagePathCandidates(picElement: QQPayloadWrapper): string[] {
+  const candidates = new Set<string>();
+
+  if (typeof picElement.sourcePath === 'string') candidates.add(picElement.sourcePath);
+  collectThumbPathCandidates(picElement.thumbPath, candidates);
+
+  return [...candidates];
+}
+
+function collectThumbPathCandidates(value: unknown, candidates: Set<string>): void {
+  if (typeof value === 'string') {
+    candidates.add(value);
+    return;
+  }
+
+  if (value instanceof Map) {
+    for (const item of value.values()) {
+      if (typeof item === 'string') candidates.add(item);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectThumbPathCandidates(item, candidates);
+    return;
+  }
+
+  if (isPlainObject(value)) {
+    for (const item of Object.values(value)) collectThumbPathCandidates(item, candidates);
+  }
+}
+
+function cloneStoredMessage(record: StoredMessage): StoredMessage {
+  return JSON.parse(JSON.stringify(record)) as StoredMessage;
 }
 
 function mergeRecoveredMessage(target: QQMessage, recovered: QQMessage): void {
