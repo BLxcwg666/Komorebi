@@ -84,10 +84,6 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   container.textContent = '';
 
   const dom = new DOMParser().parseFromString(`
-    <div class="komorebi-settings">
-      <h1>Komorebi 防撤回</h1>
-      <p class="description">拦截新版 QQNT 的撤回消息，并在聊天列表里保留原消息内容。</p>
-
       <label class="row">
         <span>
           <b>持久化保存撤回消息</b>
