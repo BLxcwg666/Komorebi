@@ -1,5 +1,6 @@
 interface AntiRecallConfig {
   mainColor: string;
+  borderWidth: number;
   saveDb: boolean;
   enableShadow: boolean;
   enableTip: boolean;
@@ -17,6 +18,7 @@ interface StorageStats {
 
 const DEFAULT_CONFIG: AntiRecallConfig = {
   mainColor: '#ff6d6d',
+  borderWidth: 2,
   saveDb: false,
   enableShadow: true,
   enableTip: true,
@@ -113,7 +115,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
       <label class="row">
         <span>
           <b>显示高亮阴影</b>
-          <small>被撤回的消息会有一圈主题色阴影。</small>
+          <small>被撤回的消息会显示一圈主题色内描边。</small>
         </span>
         <button id="shadow" class="switch" type="button" aria-pressed="false"><span></span></button>
       </label>
@@ -132,6 +134,14 @@ async function renderSettings(container: HTMLElement): Promise<void> {
           <small>用于阴影和撤回标记。</small>
         </span>
         <input id="mainColor" type="color" />
+      </label>
+
+      <label class="row">
+        <span>
+          <b>描边粗细</b>
+          <small>控制撤回消息外框，范围 0.5 到 8。</small>
+        </span>
+        <input id="borderWidth" type="number" min="0.5" max="8" step="0.5" />
       </label>
 
       <label class="row">
@@ -179,6 +189,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   const shadow = settings.querySelector<HTMLButtonElement>('#shadow');
   const tip = settings.querySelector<HTMLButtonElement>('#tip');
   const mainColor = settings.querySelector<HTMLInputElement>('#mainColor');
+  const borderWidth = settings.querySelector<HTMLInputElement>('#borderWidth');
   const maxMsgSaveLimit = settings.querySelector<HTMLInputElement>('#maxMsgSaveLimit');
   const deleteMsgCountPerTime = settings.querySelector<HTMLInputElement>('#deleteMsgCountPerTime');
 
@@ -187,6 +198,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   setSwitch(shadow, currentConfig.enableShadow);
   setSwitch(tip, currentConfig.enableTip);
   if (mainColor) mainColor.value = currentConfig.mainColor;
+  if (borderWidth) borderWidth.value = String(currentConfig.borderWidth);
   if (maxMsgSaveLimit) maxMsgSaveLimit.value = String(currentConfig.maxMsgSaveLimit);
   if (deleteMsgCountPerTime) deleteMsgCountPerTime.value = String(currentConfig.deleteMsgCountPerTime);
 
@@ -206,6 +218,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
   tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
+  borderWidth?.addEventListener('change', () => saveSetting({ borderWidth: clampBorderWidth(borderWidth.value) }));
 
   maxMsgSaveLimit?.addEventListener('change', () => {
     saveSetting({ maxMsgSaveLimit: clampLimit(maxMsgSaveLimit.value, 99999999) });
@@ -279,21 +292,32 @@ async function applyCssFromConfig(): Promise<void> {
       position: relative;
       overflow: visible !important;
       border-radius: 10px;
-      ${currentConfig.enableShadow ? `margin: 3px 3px 25px; box-shadow: 0 0 8px 5px ${currentConfig.mainColor} !important;` : 'margin-bottom: 15px;'}
+      ${currentConfig.enableShadow ? `outline: ${currentConfig.borderWidth}px solid ${currentConfig.mainColor} !important; outline-offset: -${currentConfig.borderWidth}px;` : ''}
+    }
+
+    .komorebi-recalled-parent.komorebi-recalled-text {
+      box-sizing: border-box;
+      min-width: 78px;
+      padding-right: 56px !important;
+    }
+
+    .komorebi-recalled-parent.komorebi-recalled-text .komorebi-recalled-tip {
+      top: calc(100% - 12px);
+      bottom: auto;
+      transform: translateY(-50%);
     }
 
     .komorebi-recalled-tip {
       position: absolute;
-      top: calc(100% + 6px);
-      left: 0;
+      right: 5px;
+      bottom: 4px;
       z-index: 1;
-      padding: 4px 8px;
-      border-radius: 6px;
+      padding: 2px 5px;
+      border-radius: 999px;
       color: ${currentConfig.mainColor};
-      background-color: var(--background-color-05);
-      box-shadow: var(--box-shadow);
-      backdrop-filter: blur(28px);
-      font-size: 12px;
+      background-color: color-mix(in srgb, var(--background-color-05, #000) 72%, transparent);
+      backdrop-filter: blur(10px);
+      font-size: 11px;
       line-height: 1;
       white-space: nowrap;
       pointer-events: none;
@@ -320,7 +344,7 @@ async function markRecalledById(msgId: string): Promise<void> {
 }
 
 function markRecalledItem(msgId: string, item?: HTMLElement): void {
-  const container =
+  let container =
     document.getElementById(`${msgId}-msgContainerMsgContent`) ??
     document.getElementById(`${msgId}-msgContent`)?.parentElement ??
     document.getElementById(`ml-${msgId}`)?.querySelector<HTMLElement>('.msg-content-container')?.parentElement ??
@@ -328,10 +352,17 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
     item?.querySelector<HTMLElement>('.msg-content-container') ??
     item?.querySelector<HTMLElement>('.file-message--content');
 
+  const hasImage = container?.querySelector('img') != null;
+
+  if (hasImage) {
+    container = container.querySelector<HTMLElement>('img')?.parentElement ?? container;
+  }
+
   if (!container || container.classList.contains('gray-tip-message')) return;
   if (container.querySelector('.komorebi-recalled-tip')) return;
 
   container.classList.add('komorebi-recalled-parent');
+  container.classList.toggle('komorebi-recalled-text', !hasImage);
 
   if (!currentConfig.enableTip) return;
 
@@ -346,4 +377,10 @@ function clampLimit(value: string, max: number): number {
   if (number === -1) return -1;
   if (Number.isNaN(number)) return 1;
   return Math.min(max, Math.max(1, number));
+}
+
+function clampBorderWidth(value: string): number {
+  const number = Number.parseFloat(value);
+  if (Number.isNaN(number)) return DEFAULT_CONFIG.borderWidth;
+  return Math.min(8, Math.max(0.5, number));
 }

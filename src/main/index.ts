@@ -4,6 +4,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron';
 
 interface AntiRecallConfig {
   mainColor: string;
+  borderWidth: number;
   saveDb: boolean;
   enableShadow: boolean;
   enableTip: boolean;
@@ -31,6 +32,7 @@ const PLUGIN_SLUG = 'Komorebi';
 
 const DEFAULT_CONFIG: AntiRecallConfig = {
   mainColor: '#ff6d6d',
+  borderWidth: 2,
   saveDb: false,
   enableShadow: true,
   enableTip: true,
@@ -416,9 +418,16 @@ function normalizeConfig(nextConfig: Partial<AntiRecallConfig> | null | undefine
     ...DEFAULT_CONFIG,
     ...(nextConfig ?? {}),
     saveDb: nextConfig?.saveDb === true,
+    borderWidth: normalizeBorderWidth(nextConfig?.borderWidth),
     maxMsgSaveLimit: normalizeLimit(nextConfig?.maxMsgSaveLimit, DEFAULT_CONFIG.maxMsgSaveLimit),
     deleteMsgCountPerTime: normalizeLimit(nextConfig?.deleteMsgCountPerTime, DEFAULT_CONFIG.deleteMsgCountPerTime),
   };
+}
+
+function normalizeBorderWidth(value: number | undefined): number {
+  const width = Number(value ?? DEFAULT_CONFIG.borderWidth);
+  if (!Number.isFinite(width)) return DEFAULT_CONFIG.borderWidth;
+  return Math.min(8, Math.max(0.5, width));
 }
 
 function normalizeLimit(value: number | undefined, fallback: number): number {
