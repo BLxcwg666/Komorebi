@@ -1,13 +1,13 @@
 {
-  "name": "lltemplate-vite",
-  "version": "2.0.0",
-  "description": "A plugin template for LiteLoaderQQNT, powered by Vite & TypeScript",
+  "name": "komorebi",
+  "version": "1.0.0",
+  "description": "A All-in-one plugin for LiteLoaderQQNT",
   "main": "index.js",
   "scripts": {
     "lint": "eslint --fix src/**/* --ext .js,.ts",
     "build": "electron-vite build"
   },
-  "author": "MisaLiu",
+  "author": "libxcnya.so",
   "license": "GPL-3.0-only",
   "devDependencies": {
     "@electron-toolkit/eslint-config-ts": "^3.0.0",
