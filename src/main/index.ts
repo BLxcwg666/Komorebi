@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 
@@ -23,6 +24,16 @@ interface StoredMessage {
 
 type QQMessage = Record<string, unknown>;
 type QQPayloadWrapper = Record<string, unknown>;
+type SqliteRow = { id: string; sender: string | null; msg_json: string };
+type SqliteCountRow = { count: number };
+type SqliteStatement = {
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => unknown;
+};
+type SqliteDatabase = {
+  exec: (sql: string) => void;
+  prepare: (sql: string) => SqliteStatement;
+};
 type PatchedWebContents = Electron.WebContents & {
   __komorebiAntiRecallPatched?: boolean;
   __qqntim_original_object?: {
@@ -48,10 +59,11 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
 
 const dataDir = path.join(LiteLoader.path.data, PLUGIN_SLUG);
 const imageDir = path.join(dataDir, 'images');
-const dbFilePath = path.join(dataDir, 'recalled-messages.json');
+const dbFilePath = path.join(dataDir, 'recalled-messages.db');
+const require = createRequire(import.meta.url);
 
 let config: AntiRecallConfig = loadConfig();
-let persistedMessages: Record<string, StoredMessage> | null = null;
+let sqliteDb: SqliteDatabase | null | undefined;
 const messageCache: StoredMessage[] = [];
 const recalledCache: StoredMessage[] = [];
 const patchedWindows = new Set<BrowserWindow>();
@@ -81,8 +93,7 @@ ipcMain.handle('Komorebi.antiRecall.clearStorage', async () => {
 
   if (result.response !== 0) return getStorageStats();
 
-  persistedMessages = {};
-  flushPersistedMessages();
+  clearPersistedMessages();
   recalledCache.length = 0;
 
   return getStorageStats();
@@ -249,39 +260,61 @@ function rememberRecalled(record: StoredMessage): void {
 
 function readPersistedMessage(id: string): StoredMessage | undefined {
   if (!config.saveDb) return undefined;
-  ensurePersistedMessagesLoaded();
-  const record = persistedMessages?.[id];
-  return record ? hydratePersistedMessage(record) : undefined;
+  const db = getSqliteDb();
+  if (!db) return undefined;
+
+  const row = db.prepare('SELECT id, sender, msg_json FROM recalled_messages WHERE id = ?').get(id) as SqliteRow | undefined;
+  if (!row) return undefined;
+
+  try {
+    return hydratePersistedMessage({ id: row.id, sender: row.sender ?? undefined, msg: JSON.parse(row.msg_json) as QQMessage });
+  } catch (error) {
+    log('Failed to read persisted message:', error);
+    return undefined;
+  }
 }
 
 function savePersistedMessage(record: StoredMessage): void {
   if (!config.saveDb) return;
-  ensurePersistedMessagesLoaded();
-  if (!persistedMessages || persistedMessages[record.id]) return;
+  const db = getSqliteDb();
+  if (!db) return;
 
-  persistedMessages[record.id] = persistMessageAssets(record);
-  flushPersistedMessages();
+  const persisted = persistMessageAssets(record);
+  db.prepare('INSERT OR IGNORE INTO recalled_messages (id, sender, msg_json) VALUES (?, ?, ?)')
+    .run(persisted.id, persisted.sender ?? null, JSON.stringify(persisted.msg));
 }
 
-function ensurePersistedMessagesLoaded(): void {
-  if (persistedMessages !== null) return;
+function getSqliteDb(): SqliteDatabase | undefined {
+  if (sqliteDb !== undefined) return sqliteDb ?? undefined;
 
   try {
-    persistedMessages = JSON.parse(fs.readFileSync(dbFilePath, 'utf-8')) as Record<string, StoredMessage>;
-  } catch {
-    persistedMessages = {};
+    fs.mkdirSync(dataDir, { recursive: true });
+    const { DatabaseSync } = require('node:sqlite') as { DatabaseSync: new (path: string) => SqliteDatabase };
+    sqliteDb = new DatabaseSync(dbFilePath);
+    sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS recalled_messages (
+        id TEXT PRIMARY KEY,
+        sender TEXT,
+        msg_json TEXT NOT NULL
+      );
+    `);
+  } catch (error) {
+    sqliteDb = null;
+    log('Failed to open sqlite storage:', error);
   }
+
+  return sqliteDb ?? undefined;
 }
 
-function flushPersistedMessages(): void {
-  if (!persistedMessages) return;
+function clearPersistedMessages(): void {
+  const db = getSqliteDb();
+  if (!db) return;
 
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(dbFilePath, JSON.stringify(persistedMessages), 'utf-8');
+  db.prepare('DELETE FROM recalled_messages').run();
 }
 
 function getStorageStats(): { enabled: boolean; count: number; size: number; path: string } {
-  ensurePersistedMessagesLoaded();
+  const db = getSqliteDb();
 
   let size = 0;
   try {
@@ -292,7 +325,7 @@ function getStorageStats(): { enabled: boolean; count: number; size: number; pat
 
   return {
     enabled: config.saveDb,
-    count: Object.keys(persistedMessages ?? {}).length,
+    count: (db?.prepare('SELECT COUNT(*) AS count FROM recalled_messages').get() as SqliteCountRow | undefined)?.count ?? 0,
     size,
     path: dbFilePath,
   };
