@@ -9,6 +9,9 @@ interface AntiRecallConfig {
   isAntiRecallSelfMsg: boolean;
   maxMsgSaveLimit: number;
   deleteMsgCountPerTime: number;
+  enableMentionHighlight: boolean;
+  mentionOthersColor: string;
+  mentionSelfColor: string;
 }
 
 interface StorageStats {
@@ -29,6 +32,9 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   isAntiRecallSelfMsg: false,
   maxMsgSaveLimit: 10000,
   deleteMsgCountPerTime: 500,
+  enableMentionHighlight: true,
+  mentionOthersColor: '#ff9933',
+  mentionSelfColor: '#4a9eff',
 };
 
 let recalledIds: string[] = [];
@@ -157,6 +163,30 @@ async function renderSettings(container: HTMLElement): Promise<void> {
 
       <label class="row">
         <span>
+          <b>高亮 @ 提及</b>
+          <small>给消息里的 @XXX 加上可调颜色，区分对方和自己发的消息。</small>
+        </span>
+        <button id="mentionHighlight" class="switch" type="button" aria-pressed="false"><span></span></button>
+      </label>
+
+      <label class="row">
+        <span>
+          <b>对方 @ 颜色</b>
+          <small>别人发的消息里的 @XXX 颜色。</small>
+        </span>
+        <input id="mentionOthersColor" type="color" />
+      </label>
+
+      <label class="row">
+        <span>
+          <b>自己 @ 颜色</b>
+          <small>自己发的消息里的 @XXX 颜色。</small>
+        </span>
+        <input id="mentionSelfColor" type="color" />
+      </label>
+
+      <label class="row">
+        <span>
           <b>描边粗细</b>
           <small>控制撤回消息外框，范围 0.5 到 8。</small>
         </span>
@@ -210,6 +240,9 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   const shadow = settings.querySelector<HTMLButtonElement>('#shadow');
   const tip = settings.querySelector<HTMLButtonElement>('#tip');
   const mainColor = settings.querySelector<HTMLInputElement>('#mainColor');
+  const mentionHighlight = settings.querySelector<HTMLButtonElement>('#mentionHighlight');
+  const mentionOthersColor = settings.querySelector<HTMLInputElement>('#mentionOthersColor');
+  const mentionSelfColor = settings.querySelector<HTMLInputElement>('#mentionSelfColor');
   const borderWidth = settings.querySelector<HTMLInputElement>('#borderWidth');
   const maxMsgSaveLimit = settings.querySelector<HTMLInputElement>('#maxMsgSaveLimit');
   const deleteMsgCountPerTime = settings.querySelector<HTMLInputElement>('#deleteMsgCountPerTime');
@@ -220,7 +253,10 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   setSwitch(messageAnimation, currentConfig.enableMessageAnimation);
   setSwitch(shadow, currentConfig.enableShadow);
   setSwitch(tip, currentConfig.enableTip);
+  setSwitch(mentionHighlight, currentConfig.enableMentionHighlight);
   if (mainColor) mainColor.value = currentConfig.mainColor;
+  if (mentionOthersColor) mentionOthersColor.value = currentConfig.mentionOthersColor;
+  if (mentionSelfColor) mentionSelfColor.value = currentConfig.mentionSelfColor;
   if (borderWidth) borderWidth.value = String(currentConfig.borderWidth);
   if (maxMsgSaveLimit) maxMsgSaveLimit.value = String(currentConfig.maxMsgSaveLimit);
   if (deleteMsgCountPerTime) deleteMsgCountPerTime.value = String(currentConfig.deleteMsgCountPerTime);
@@ -242,7 +278,10 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   messageAnimation?.addEventListener('click', () => toggleSettingSwitch(messageAnimation, 'enableMessageAnimation'));
   shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
   tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
+  mentionHighlight?.addEventListener('click', () => toggleSettingSwitch(mentionHighlight, 'enableMentionHighlight'));
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
+  mentionOthersColor?.addEventListener('change', () => saveSetting({ mentionOthersColor: mentionOthersColor.value }));
+  mentionSelfColor?.addEventListener('change', () => saveSetting({ mentionSelfColor: mentionSelfColor.value }));
   borderWidth?.addEventListener('change', () => saveSetting({ borderWidth: clampBorderWidth(borderWidth.value) }));
 
   maxMsgSaveLimit?.addEventListener('change', () => {
@@ -283,7 +322,7 @@ function isSwitchActive(button: HTMLButtonElement): boolean {
 
 function toggleSettingSwitch(
   button: HTMLButtonElement,
-  key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableMessageAnimation' | 'enableShadow' | 'enableTip',
+  key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableMessageAnimation' | 'enableShadow' | 'enableTip' | 'enableMentionHighlight',
 ): void {
   const next = !isSwitchActive(button);
   setSwitch(button, next);
@@ -354,6 +393,27 @@ async function applyCssFromConfig(): Promise<void> {
     @media (prefers-reduced-motion: reduce) {
       .ml-item { transition: none !important; }
     }
+
+    ${currentConfig.enableMentionHighlight ? `
+    .text-element--at,
+    .text-element--at-all,
+    .mention-info,
+    .message-content .at,
+    .msg-content-container .at {
+      color: ${currentConfig.mentionOthersColor} !important;
+    }
+
+    .message-container--self .text-element--at,
+    .message-container--self .text-element--at-all,
+    .message-container--self .mention-info,
+    .message-container--self .at,
+    .container--self .text-element--at,
+    .container--self .text-element--at-all,
+    .container--self .mention-info,
+    .container--self .at {
+      color: ${currentConfig.mentionSelfColor} !important;
+    }
+    ` : ''}
   `;
 
   document.head.appendChild(style);
