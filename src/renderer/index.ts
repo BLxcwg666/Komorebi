@@ -137,17 +137,17 @@ async function renderSettings(container: HTMLElement): Promise<void> {
       <label class="row">
         <span>
           <b>内存缓存上限</b>
-          <small>太小会影响很早之前消息的防撤回。</small>
+          <small>太小会影响很早之前消息的防撤回；填 -1 表示不限制。</small>
         </span>
-        <input id="maxMsgSaveLimit" type="number" min="1" max="99999999" />
+        <input id="maxMsgSaveLimit" type="number" min="-1" max="99999999" />
       </label>
 
       <label class="row">
         <span>
           <b>超限时清理条数</b>
-          <small>达到上限后从最旧消息开始清理。</small>
+          <small>达到上限后从最旧消息开始清理；填 -1 时会清空当前内存缓存。</small>
         </span>
-        <input id="deleteMsgCountPerTime" type="number" min="1" max="99999" />
+        <input id="deleteMsgCountPerTime" type="number" min="-1" max="99999" />
       </label>
 
       <style>
@@ -208,11 +208,11 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
 
   maxMsgSaveLimit?.addEventListener('change', () => {
-    saveSetting({ maxMsgSaveLimit: clampNumber(maxMsgSaveLimit.value, 1, 99999999) });
+    saveSetting({ maxMsgSaveLimit: clampLimit(maxMsgSaveLimit.value, 99999999) });
   });
 
   deleteMsgCountPerTime?.addEventListener('change', () => {
-    saveSetting({ deleteMsgCountPerTime: clampNumber(deleteMsgCountPerTime.value, 1, 99999) });
+    saveSetting({ deleteMsgCountPerTime: clampLimit(deleteMsgCountPerTime.value, 99999) });
   });
 
   container.appendChild(settings);
@@ -341,8 +341,9 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
   container.appendChild(tip);
 }
 
-function clampNumber(value: string, min: number, max: number): number {
+function clampLimit(value: string, max: number): number {
   const number = Number.parseInt(value, 10);
-  if (Number.isNaN(number)) return min;
-  return Math.min(max, Math.max(min, number));
+  if (number === -1) return -1;
+  if (Number.isNaN(number)) return 1;
+  return Math.min(max, Math.max(1, number));
 }

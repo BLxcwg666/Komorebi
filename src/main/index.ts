@@ -209,7 +209,7 @@ function cacheIncomingMessages(args: unknown[]): void {
     messageCache[index] = { id: msgId, sender: String(msg.peerUid ?? ''), msg };
   }
 
-  if (messageCache.length > config.maxMsgSaveLimit) {
+  if (config.maxMsgSaveLimit !== -1 && messageCache.length > config.maxMsgSaveLimit) {
     messageCache.splice(0, config.deleteMsgCountPerTime);
   }
 }
@@ -416,9 +416,16 @@ function normalizeConfig(nextConfig: Partial<AntiRecallConfig> | null | undefine
     ...DEFAULT_CONFIG,
     ...(nextConfig ?? {}),
     saveDb: nextConfig?.saveDb === true,
-    maxMsgSaveLimit: Math.max(1, Number(nextConfig?.maxMsgSaveLimit ?? DEFAULT_CONFIG.maxMsgSaveLimit)),
-    deleteMsgCountPerTime: Math.max(1, Number(nextConfig?.deleteMsgCountPerTime ?? DEFAULT_CONFIG.deleteMsgCountPerTime)),
+    maxMsgSaveLimit: normalizeLimit(nextConfig?.maxMsgSaveLimit, DEFAULT_CONFIG.maxMsgSaveLimit),
+    deleteMsgCountPerTime: normalizeLimit(nextConfig?.deleteMsgCountPerTime, DEFAULT_CONFIG.deleteMsgCountPerTime),
   };
+}
+
+function normalizeLimit(value: number | undefined, fallback: number): number {
+  const limit = Number(value ?? fallback);
+  if (limit === -1) return -1;
+  if (!Number.isFinite(limit)) return fallback;
+  return Math.max(1, limit);
 }
 
 function broadcast(channel: string): void {
