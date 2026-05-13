@@ -1,7 +1,10 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 
 interface AntiRecallConfig {
   mainColor: string;
+  saveDb: boolean;
   enableShadow: boolean;
   enableTip: boolean;
   isAntiRecallSelfMsg: boolean;
@@ -28,6 +31,7 @@ const PLUGIN_SLUG = 'Komorebi';
 
 const DEFAULT_CONFIG: AntiRecallConfig = {
   mainColor: '#ff6d6d',
+  saveDb: false,
   enableShadow: true,
   enableTip: true,
   isAntiRecallSelfMsg: false,
@@ -35,7 +39,11 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   deleteMsgCountPerTime: 500,
 };
 
+const dataDir = path.join(LiteLoader.path.data, PLUGIN_SLUG);
+const dbFilePath = path.join(dataDir, 'recalled-messages.json');
+
 let config: AntiRecallConfig = loadConfig();
+let persistedMessages: Record<string, StoredMessage> | null = null;
 const messageCache: StoredMessage[] = [];
 const recalledCache: StoredMessage[] = [];
 const patchedWindows = new Set<BrowserWindow>();
@@ -46,6 +54,26 @@ ipcMain.handle('Komorebi.antiRecall.saveConfig', (_event, nextConfig: AntiRecall
   config = normalizeConfig(nextConfig);
   LiteLoader.api.config.set(PLUGIN_SLUG, config);
   broadcast('Komorebi.antiRecall.repatchCss');
+});
+
+ipcMain.handle('Komorebi.antiRecall.getStorageStats', () => getStorageStats());
+
+ipcMain.handle('Komorebi.antiRecall.clearStorage', async () => {
+  const result = await dialog.showMessageBox({
+    type: 'warning',
+    title: '清空防撤回存档',
+    message: '清空后，已持久化保存的撤回消息无法恢复。确定继续吗？',
+    buttons: ['确定', '取消'],
+    cancelId: 1,
+  });
+
+  if (result.response !== 0) return getStorageStats();
+
+  persistedMessages = {};
+  flushPersistedMessages();
+  recalledCache.length = 0;
+
+  return getStorageStats();
 });
 
 export const onBrowserWindowCreated = (window: BrowserWindow) => {
@@ -108,7 +136,7 @@ async function recoverRecalledMessagesInList(webContents: Electron.WebContents, 
     const recallTip = asRecord(payload.msgList[index]);
     if (!recallTip) continue;
 
-    const record = findCachedMessage(String(recallTip.msgId));
+    const record = await findCachedMessage(String(recallTip.msgId));
     if (!record?.msg || typeof record.msg !== 'object') continue;
 
     rememberRecalled(record);
@@ -138,9 +166,12 @@ async function interceptRealtimeRecall(webContents: Electron.WebContents, args: 
   const recallMsg = asRecord(payload.msgList[0]);
   if (!recallMsg) return;
   const msgId = String(recallMsg.msgId);
-  const record = findCachedMessage(msgId);
+  const record = await findCachedMessage(msgId);
 
-  if (record) rememberRecalled(record);
+  if (record) {
+    rememberRecalled(record);
+    savePersistedMessage(record);
+  }
 
   webContents.send('Komorebi.antiRecall.recallTip', msgId);
   wrapper.cmdName = 'none';
@@ -195,13 +226,63 @@ function isRecallTip(rawMsg: unknown): boolean {
     (config.isAntiRecallSelfMsg || !revoke.isSelfOperate);
 }
 
-function findCachedMessage(id: string): StoredMessage | undefined {
-  return recalledCache.find(item => item.id === id) ?? messageCache.find(item => item.id === id);
+async function findCachedMessage(id: string): Promise<StoredMessage | undefined> {
+  return recalledCache.find(item => item.id === id) ?? messageCache.find(item => item.id === id) ?? readPersistedMessage(id);
 }
 
 function rememberRecalled(record: StoredMessage): void {
   if (recalledCache.some(item => item.id === record.id)) return;
   recalledCache.push(record);
+}
+
+function readPersistedMessage(id: string): StoredMessage | undefined {
+  if (!config.saveDb) return undefined;
+  ensurePersistedMessagesLoaded();
+  return persistedMessages?.[id];
+}
+
+function savePersistedMessage(record: StoredMessage): void {
+  if (!config.saveDb) return;
+  ensurePersistedMessagesLoaded();
+  if (!persistedMessages || persistedMessages[record.id]) return;
+
+  persistedMessages[record.id] = record;
+  flushPersistedMessages();
+}
+
+function ensurePersistedMessagesLoaded(): void {
+  if (persistedMessages !== null) return;
+
+  try {
+    persistedMessages = JSON.parse(fs.readFileSync(dbFilePath, 'utf-8')) as Record<string, StoredMessage>;
+  } catch {
+    persistedMessages = {};
+  }
+}
+
+function flushPersistedMessages(): void {
+  if (!persistedMessages) return;
+
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(dbFilePath, JSON.stringify(persistedMessages), 'utf-8');
+}
+
+function getStorageStats(): { enabled: boolean; count: number; size: number; path: string } {
+  ensurePersistedMessagesLoaded();
+
+  let size = 0;
+  try {
+    size = fs.statSync(dbFilePath).size;
+  } catch {
+    size = 0;
+  }
+
+  return {
+    enabled: config.saveDb,
+    count: Object.keys(persistedMessages ?? {}).length,
+    size,
+    path: dbFilePath,
+  };
 }
 
 function mergeRecoveredMessage(target: QQMessage, recovered: QQMessage): void {
@@ -232,6 +313,7 @@ function normalizeConfig(nextConfig: Partial<AntiRecallConfig> | null | undefine
   return {
     ...DEFAULT_CONFIG,
     ...(nextConfig ?? {}),
+    saveDb: nextConfig?.saveDb === true,
     maxMsgSaveLimit: Math.max(1, Number(nextConfig?.maxMsgSaveLimit ?? DEFAULT_CONFIG.maxMsgSaveLimit)),
     deleteMsgCountPerTime: Math.max(1, Number(nextConfig?.deleteMsgCountPerTime ?? DEFAULT_CONFIG.deleteMsgCountPerTime)),
   };

@@ -1,5 +1,6 @@
 interface AntiRecallConfig {
   mainColor: string;
+  saveDb: boolean;
   enableShadow: boolean;
   enableTip: boolean;
   isAntiRecallSelfMsg: boolean;
@@ -7,8 +8,16 @@ interface AntiRecallConfig {
   deleteMsgCountPerTime: number;
 }
 
+interface StorageStats {
+  enabled: boolean;
+  count: number;
+  size: number;
+  path: string;
+}
+
 const DEFAULT_CONFIG: AntiRecallConfig = {
   mainColor: '#ff6d6d',
+  saveDb: false,
   enableShadow: true,
   enableTip: true,
   isAntiRecallSelfMsg: false,
@@ -79,10 +88,26 @@ async function renderSettings(container: HTMLElement): Promise<void> {
 
       <label class="row">
         <span>
+          <b>持久化保存撤回消息</b>
+          <small>开启后，撤回消息会保存到插件数据目录，重启 QQ 后仍可恢复。</small>
+        </span>
+        <button id="saveDb" class="switch" type="button" aria-pressed="false"><span></span></button>
+      </label>
+
+      <div class="storage-panel">
+        <div>
+          <b>存档状态</b>
+          <small id="storageStats">读取中...</small>
+        </div>
+        <button id="clearStorage" type="button">清空存档</button>
+      </div>
+
+      <label class="row">
+        <span>
           <b>反撤回自己的消息</b>
           <small>默认只拦截别人撤回的消息。</small>
         </span>
-        <input id="antiSelf" type="checkbox" />
+        <button id="antiSelf" class="switch" type="button" aria-pressed="false"><span></span></button>
       </label>
 
       <label class="row">
@@ -90,7 +115,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
           <b>显示高亮阴影</b>
           <small>被撤回的消息会有一圈主题色阴影。</small>
         </span>
-        <input id="shadow" type="checkbox" />
+        <button id="shadow" class="switch" type="button" aria-pressed="false"><span></span></button>
       </label>
 
       <label class="row">
@@ -98,7 +123,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
           <b>显示“已撤回”标记</b>
           <small>在消息下方追加一个撤回提示。</small>
         </span>
-        <input id="tip" type="checkbox" />
+        <button id="tip" class="switch" type="button" aria-pressed="false"><span></span></button>
       </label>
 
       <label class="row">
@@ -131,8 +156,15 @@ async function renderSettings(container: HTMLElement): Promise<void> {
         .komorebi-settings .description { margin: 0 0 18px; color: var(--text_secondary); }
         .komorebi-settings .row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 0; border-top: 1px solid rgba(127, 127, 127, 0.18); }
         .komorebi-settings .row span { display: grid; gap: 4px; }
+        .komorebi-settings .storage-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 10px; padding: 12px; border-radius: 8px; background: rgba(127, 127, 127, 0.08); }
+        .komorebi-settings .storage-panel div { display: grid; gap: 4px; min-width: 0; }
         .komorebi-settings small { color: var(--text_secondary); }
-        .komorebi-settings input[type="number"] { width: 120px; }
+        .komorebi-settings input[type="number"] { width: 120px; box-sizing: border-box; padding: 6px 8px; border: 1px solid rgba(127, 127, 127, 0.28); border-radius: 6px; color: var(--text_primary); background: rgba(127, 127, 127, 0.12); }
+        .komorebi-settings button { padding: 6px 12px; border: 1px solid rgba(127, 127, 127, 0.24); border-radius: 6px; color: var(--text_primary); background: transparent; cursor: pointer; }
+        .komorebi-settings .switch { position: relative; flex: 0 0 auto; width: 46px; height: 26px; padding: 0; border: 0; border-radius: 999px; background: rgba(127, 127, 127, 0.34); transition: background 160ms ease; }
+        .komorebi-settings .switch span { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28); transition: transform 160ms ease; }
+        .komorebi-settings .switch.is-active { background: var(--brand_standard, #0099ff); }
+        .komorebi-settings .switch.is-active span { transform: translateX(20px); }
       </style>
     </div>
   `, 'text/html');
@@ -140,23 +172,39 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   const settings = dom.body.firstElementChild as HTMLElement | null;
   if (!settings) return;
 
-  const antiSelf = settings.querySelector<HTMLInputElement>('#antiSelf');
-  const shadow = settings.querySelector<HTMLInputElement>('#shadow');
-  const tip = settings.querySelector<HTMLInputElement>('#tip');
+  const saveDb = settings.querySelector<HTMLButtonElement>('#saveDb');
+  const storageStats = settings.querySelector<HTMLElement>('#storageStats');
+  const clearStorage = settings.querySelector<HTMLButtonElement>('#clearStorage');
+  const antiSelf = settings.querySelector<HTMLButtonElement>('#antiSelf');
+  const shadow = settings.querySelector<HTMLButtonElement>('#shadow');
+  const tip = settings.querySelector<HTMLButtonElement>('#tip');
   const mainColor = settings.querySelector<HTMLInputElement>('#mainColor');
   const maxMsgSaveLimit = settings.querySelector<HTMLInputElement>('#maxMsgSaveLimit');
   const deleteMsgCountPerTime = settings.querySelector<HTMLInputElement>('#deleteMsgCountPerTime');
 
-  if (antiSelf) antiSelf.checked = currentConfig.isAntiRecallSelfMsg;
-  if (shadow) shadow.checked = currentConfig.enableShadow;
-  if (tip) tip.checked = currentConfig.enableTip;
+  setSwitch(saveDb, currentConfig.saveDb);
+  setSwitch(antiSelf, currentConfig.isAntiRecallSelfMsg);
+  setSwitch(shadow, currentConfig.enableShadow);
+  setSwitch(tip, currentConfig.enableTip);
   if (mainColor) mainColor.value = currentConfig.mainColor;
   if (maxMsgSaveLimit) maxMsgSaveLimit.value = String(currentConfig.maxMsgSaveLimit);
   if (deleteMsgCountPerTime) deleteMsgCountPerTime.value = String(currentConfig.deleteMsgCountPerTime);
 
-  antiSelf?.addEventListener('change', () => saveSetting({ isAntiRecallSelfMsg: antiSelf.checked }));
-  shadow?.addEventListener('change', () => saveSetting({ enableShadow: shadow.checked }));
-  tip?.addEventListener('change', () => saveSetting({ enableTip: tip.checked }));
+  saveDb?.addEventListener('click', async () => {
+    const next = !isSwitchActive(saveDb);
+    setSwitch(saveDb, next);
+    await saveSetting({ saveDb: next });
+    void refreshStorageStats(storageStats);
+  });
+
+  clearStorage?.addEventListener('click', async () => {
+    await window.Komorebi.clearStorage<StorageStats>();
+    await refreshStorageStats(storageStats);
+  });
+
+  antiSelf?.addEventListener('click', () => toggleSettingSwitch(antiSelf, 'isAntiRecallSelfMsg'));
+  shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
+  tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
 
   maxMsgSaveLimit?.addEventListener('change', () => {
@@ -168,6 +216,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   });
 
   container.appendChild(settings);
+  await refreshStorageStats(storageStats);
 }
 
 async function getConfig(): Promise<AntiRecallConfig> {
@@ -181,6 +230,41 @@ async function getConfig(): Promise<AntiRecallConfig> {
 async function saveSetting(patch: Partial<AntiRecallConfig>): Promise<void> {
   currentConfig = { ...currentConfig, ...patch };
   await window.Komorebi.saveConfig(currentConfig);
+}
+
+function setSwitch(button: HTMLButtonElement | null | undefined, active: boolean): void {
+  if (!button) return;
+
+  button.classList.toggle('is-active', active);
+  button.setAttribute('aria-pressed', String(active));
+}
+
+function isSwitchActive(button: HTMLButtonElement): boolean {
+  return button.classList.contains('is-active');
+}
+
+function toggleSettingSwitch(button: HTMLButtonElement, key: 'isAntiRecallSelfMsg' | 'enableShadow' | 'enableTip'): void {
+  const next = !isSwitchActive(button);
+  setSwitch(button, next);
+  void saveSetting({ [key]: next });
+}
+
+async function refreshStorageStats(target?: HTMLElement | null): Promise<void> {
+  if (!target) return;
+
+  try {
+    currentConfig = await getConfig();
+    const stats = await window.Komorebi.getStorageStats<StorageStats>();
+    target.textContent = `${currentConfig.saveDb ? '已开启' : '未开启'}，已保存 ${stats.count} 条，${formatBytes(stats.size)}，位置：${stats.path}`;
+  } catch {
+    target.textContent = '读取失败';
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 async function applyCssFromConfig(): Promise<void> {
