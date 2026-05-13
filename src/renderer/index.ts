@@ -399,7 +399,12 @@ function animateMessageListShift(
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) collectMessageItems(node, addedItems);
   }
-  if (addedItems.size === 0) return;
+  if (addedItems.size === 0 || addedItems.size > 2) return;
+
+  const allItems = list.querySelectorAll<HTMLElement>('.ml-item');
+  const lastItem = allItems[allItems.length - 1];
+  if (!lastItem || !addedItems.has(lastItem)) return;
+
   if (!isNearMessageListBottom(list)) return;
 
   const now = performance.now();
