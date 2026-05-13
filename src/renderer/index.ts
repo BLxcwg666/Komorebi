@@ -2,6 +2,7 @@ interface AntiRecallConfig {
   mainColor: string;
   borderWidth: number;
   saveDb: boolean;
+  blockQQNTUpdate: boolean;
   enableShadow: boolean;
   enableTip: boolean;
   isAntiRecallSelfMsg: boolean;
@@ -20,6 +21,7 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   mainColor: '#ff6d6d',
   borderWidth: 2,
   saveDb: false,
+  blockQQNTUpdate: true,
   enableShadow: true,
   enableTip: true,
   isAntiRecallSelfMsg: false,
@@ -84,6 +86,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   container.textContent = '';
 
   const dom = new DOMParser().parseFromString(`
+    <div class="komorebi-settings">
       <label class="row">
         <span>
           <b>持久化保存撤回消息</b>
@@ -106,6 +109,14 @@ async function renderSettings(container: HTMLElement): Promise<void> {
           <small>默认只拦截别人撤回的消息。</small>
         </span>
         <button id="antiSelf" class="switch" type="button" aria-pressed="false"><span></span></button>
+      </label>
+
+      <label class="row">
+        <span>
+          <b>拦截 QQNT 更新</b>
+          <small>阻止 QQNT 请求常见更新、补丁和升级接口。</small>
+        </span>
+        <button id="blockUpdate" class="switch" type="button" aria-pressed="false"><span></span></button>
       </label>
 
       <label class="row">
@@ -182,6 +193,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   const storageStats = settings.querySelector<HTMLElement>('#storageStats');
   const clearStorage = settings.querySelector<HTMLButtonElement>('#clearStorage');
   const antiSelf = settings.querySelector<HTMLButtonElement>('#antiSelf');
+  const blockUpdate = settings.querySelector<HTMLButtonElement>('#blockUpdate');
   const shadow = settings.querySelector<HTMLButtonElement>('#shadow');
   const tip = settings.querySelector<HTMLButtonElement>('#tip');
   const mainColor = settings.querySelector<HTMLInputElement>('#mainColor');
@@ -191,6 +203,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
 
   setSwitch(saveDb, currentConfig.saveDb);
   setSwitch(antiSelf, currentConfig.isAntiRecallSelfMsg);
+  setSwitch(blockUpdate, currentConfig.blockQQNTUpdate);
   setSwitch(shadow, currentConfig.enableShadow);
   setSwitch(tip, currentConfig.enableTip);
   if (mainColor) mainColor.value = currentConfig.mainColor;
@@ -211,6 +224,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   });
 
   antiSelf?.addEventListener('click', () => toggleSettingSwitch(antiSelf, 'isAntiRecallSelfMsg'));
+  blockUpdate?.addEventListener('click', () => toggleSettingSwitch(blockUpdate, 'blockQQNTUpdate'));
   shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
   tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
@@ -252,7 +266,7 @@ function isSwitchActive(button: HTMLButtonElement): boolean {
   return button.classList.contains('is-active');
 }
 
-function toggleSettingSwitch(button: HTMLButtonElement, key: 'isAntiRecallSelfMsg' | 'enableShadow' | 'enableTip'): void {
+function toggleSettingSwitch(button: HTMLButtonElement, key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableShadow' | 'enableTip'): void {
   const next = !isSwitchActive(button);
   setSwitch(button, next);
   void saveSetting({ [key]: next });
