@@ -3,6 +3,7 @@ interface AntiRecallConfig {
   borderWidth: number;
   saveDb: boolean;
   blockQQNTUpdate: boolean;
+  enableMessageAnimation: boolean;
   enableShadow: boolean;
   enableTip: boolean;
   isAntiRecallSelfMsg: boolean;
@@ -22,6 +23,7 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   borderWidth: 2,
   saveDb: false,
   blockQQNTUpdate: true,
+  enableMessageAnimation: true,
   enableShadow: true,
   enableTip: true,
   isAntiRecallSelfMsg: false,
@@ -55,6 +57,7 @@ async function setupMainWindowPatches(): Promise<void> {
   });
 
   await applyCssFromConfig();
+  observeMessageEntrances();
 
   let throttled = false;
   const observer = new MutationObserver(mutations => {
@@ -117,6 +120,14 @@ async function renderSettings(container: HTMLElement): Promise<void> {
           <small>阻止 QQNT 请求常见更新、补丁和升级接口。</small>
         </span>
         <button id="blockUpdate" class="switch" type="button" aria-pressed="false"><span></span></button>
+      </label>
+
+      <label class="row">
+        <span>
+          <b>消息上滑动画</b>
+          <small>发出和收到新消息时使用类似 Telegram 的轻量入场动画。</small>
+        </span>
+        <button id="messageAnimation" class="switch" type="button" aria-pressed="false"><span></span></button>
       </label>
 
       <label class="row">
@@ -194,6 +205,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   const clearStorage = settings.querySelector<HTMLButtonElement>('#clearStorage');
   const antiSelf = settings.querySelector<HTMLButtonElement>('#antiSelf');
   const blockUpdate = settings.querySelector<HTMLButtonElement>('#blockUpdate');
+  const messageAnimation = settings.querySelector<HTMLButtonElement>('#messageAnimation');
   const shadow = settings.querySelector<HTMLButtonElement>('#shadow');
   const tip = settings.querySelector<HTMLButtonElement>('#tip');
   const mainColor = settings.querySelector<HTMLInputElement>('#mainColor');
@@ -204,6 +216,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   setSwitch(saveDb, currentConfig.saveDb);
   setSwitch(antiSelf, currentConfig.isAntiRecallSelfMsg);
   setSwitch(blockUpdate, currentConfig.blockQQNTUpdate);
+  setSwitch(messageAnimation, currentConfig.enableMessageAnimation);
   setSwitch(shadow, currentConfig.enableShadow);
   setSwitch(tip, currentConfig.enableTip);
   if (mainColor) mainColor.value = currentConfig.mainColor;
@@ -225,6 +238,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
 
   antiSelf?.addEventListener('click', () => toggleSettingSwitch(antiSelf, 'isAntiRecallSelfMsg'));
   blockUpdate?.addEventListener('click', () => toggleSettingSwitch(blockUpdate, 'blockQQNTUpdate'));
+  messageAnimation?.addEventListener('click', () => toggleSettingSwitch(messageAnimation, 'enableMessageAnimation'));
   shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
   tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
@@ -266,7 +280,10 @@ function isSwitchActive(button: HTMLButtonElement): boolean {
   return button.classList.contains('is-active');
 }
 
-function toggleSettingSwitch(button: HTMLButtonElement, key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableShadow' | 'enableTip'): void {
+function toggleSettingSwitch(
+  button: HTMLButtonElement,
+  key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableMessageAnimation' | 'enableShadow' | 'enableTip',
+): void {
   const next = !isSwitchActive(button);
   setSwitch(button, next);
   void saveSetting({ [key]: next });
@@ -332,9 +349,147 @@ async function applyCssFromConfig(): Promise<void> {
       white-space: nowrap;
       pointer-events: none;
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      .ml-item { transition: none !important; }
+    }
   `;
 
   document.head.appendChild(style);
+}
+
+function observeMessageEntrances(): void {
+  if (!window.Komorebi) return;
+
+  let list: HTMLElement | null = null;
+  let initialized = false;
+  let lastAnimatedAt = 0;
+  const observer = new MutationObserver(mutations => {
+    if (!list) return;
+
+    if (!initialized) {
+      initialized = true;
+      return;
+    }
+
+    void animateMessageListShift(list, mutations, lastAnimatedAt, time => {
+      lastAnimatedAt = time;
+    });
+  });
+
+  const timer = window.setInterval(() => {
+    const msgList = document.querySelector<HTMLElement>('.chat-msg-area__vlist') ?? document.querySelector<HTMLElement>('.ml-list.list');
+    if (!msgList) return;
+
+    list = msgList;
+    window.clearInterval(timer);
+    observer.observe(msgList, { childList: true, subtree: true });
+  }, 100);
+}
+
+function animateMessageListShift(
+  list: HTMLElement,
+  mutations: MutationRecord[],
+  lastAnimatedAt: number,
+  setLastAnimatedAt: (time: number) => void,
+): void {
+  if (!currentConfig.enableMessageAnimation || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const addedItems = new Set<HTMLElement>();
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) collectMessageItems(node, addedItems);
+  }
+  if (addedItems.size === 0) return;
+  if (!isNearMessageListBottom(list)) return;
+
+  const now = performance.now();
+  if (now - lastAnimatedAt < 280) return;
+  setLastAnimatedAt(now);
+
+  requestAnimationFrame(() => {
+    const delta = getAddedMessagesHeight(addedItems);
+    if (delta <= 0 || delta > 120) return;
+
+    const viewport = getMessageViewport(list);
+    const animatedTargets = getVisibleMessageAnimationTargets(list, viewport);
+    if (animatedTargets.length === 0 || animatedTargets.length > 18) return;
+
+    for (const target of animatedTargets) {
+      target.animate(
+        [
+          { transform: `translate3d(0, ${delta}px, 0)` },
+          { transform: 'translate3d(0, 0, 0)' },
+        ],
+        { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'backwards' },
+      );
+    }
+  });
+}
+
+function getAddedMessagesHeight(items: Set<HTMLElement>): number {
+  let height = 0;
+
+  for (const item of items) {
+    if (item.classList.contains('gray-tip-message')) continue;
+
+    const style = window.getComputedStyle(item);
+    const marginY = Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom);
+    height += item.getBoundingClientRect().height + marginY;
+  }
+
+  return Math.min(120, Math.max(0, height));
+}
+
+function getMessageViewport(list: HTMLElement): DOMRect {
+  return (list.closest('.chat-msg-area') ?? list.parentElement ?? list).getBoundingClientRect();
+}
+
+function isNearMessageListBottom(list: HTMLElement): boolean {
+  const scroller = findScrollableParent(list);
+  if (!scroller) return true;
+
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
+}
+
+function findScrollableParent(element: HTMLElement): HTMLElement | null {
+  let current = element.parentElement;
+
+  while (current) {
+    if (current.scrollHeight > current.clientHeight + 8) return current;
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function getVisibleMessageAnimationTargets(list: HTMLElement, viewport: DOMRect): HTMLElement[] {
+  const targets: HTMLElement[] = [];
+
+  for (const item of list.querySelectorAll<HTMLElement>('.ml-item')) {
+    const rect = item.getBoundingClientRect();
+    if (rect.bottom < viewport.top || rect.top > viewport.bottom) continue;
+
+    targets.push(getMessageAnimationTarget(item));
+  }
+
+  return targets;
+}
+
+function getMessageAnimationTarget(item: HTMLElement): HTMLElement {
+  return item.firstElementChild instanceof HTMLElement ? item.firstElementChild : item;
+}
+
+function collectMessageItems(node: Node, items: Set<HTMLElement>): void {
+  if (!(node instanceof HTMLElement)) return;
+
+  if (node.classList.contains('ml-item')) {
+    items.add(node);
+    return;
+  }
+
+  for (const item of node.querySelectorAll<HTMLElement>('.ml-item')) {
+    items.add(item);
+  }
 }
 
 async function markRecalledInView(): Promise<void> {

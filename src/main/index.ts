@@ -7,6 +7,7 @@ interface AntiRecallConfig {
   borderWidth: number;
   saveDb: boolean;
   blockQQNTUpdate: boolean;
+  enableMessageAnimation: boolean;
   enableShadow: boolean;
   enableTip: boolean;
   isAntiRecallSelfMsg: boolean;
@@ -37,6 +38,7 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   borderWidth: 2,
   saveDb: false,
   blockQQNTUpdate: true,
+  enableMessageAnimation: true,
   enableShadow: true,
   enableTip: true,
   isAntiRecallSelfMsg: false,
