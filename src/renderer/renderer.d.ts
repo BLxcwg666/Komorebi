@@ -26,5 +26,8 @@ declare interface $LiteLoader extends LiteLoader {
 
 declare global {
   const LiteLoader: $LiteLoader;
-  const LLTemplate_Vite: typeof IPCExports;
+
+  interface Window {
+    Komorebi: typeof IPCExports;
+  }
 }

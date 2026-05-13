@@ -1,10 +1,257 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 
-ipcMain.on('LLTemplate-Vite.Greeting', (_e, name: string) => {
-  console.log('Hello, ' + name + '!');
+interface AntiRecallConfig {
+  mainColor: string;
+  enableShadow: boolean;
+  enableTip: boolean;
+  isAntiRecallSelfMsg: boolean;
+  maxMsgSaveLimit: number;
+  deleteMsgCountPerTime: number;
+}
+
+interface StoredMessage {
+  id: string;
+  sender?: string;
+  msg: Record<string, unknown>;
+}
+
+type QQMessage = Record<string, unknown>;
+type QQPayloadWrapper = Record<string, unknown>;
+type PatchedWebContents = Electron.WebContents & {
+  __komorebiAntiRecallPatched?: boolean;
+  __qqntim_original_object?: {
+    send?: (channel: string, ...args: unknown[]) => unknown;
+  };
+};
+
+const PLUGIN_SLUG = 'Komorebi';
+
+const DEFAULT_CONFIG: AntiRecallConfig = {
+  mainColor: '#ff6d6d',
+  enableShadow: true,
+  enableTip: true,
+  isAntiRecallSelfMsg: false,
+  maxMsgSaveLimit: 10000,
+  deleteMsgCountPerTime: 500,
+};
+
+let config: AntiRecallConfig = loadConfig();
+const messageCache: StoredMessage[] = [];
+const recalledCache: StoredMessage[] = [];
+const patchedWindows = new Set<BrowserWindow>();
+
+ipcMain.handle('Komorebi.antiRecall.getConfig', () => config);
+
+ipcMain.handle('Komorebi.antiRecall.saveConfig', (_event, nextConfig: AntiRecallConfig) => {
+  config = normalizeConfig(nextConfig);
+  LiteLoader.api.config.set(PLUGIN_SLUG, config);
+  broadcast('Komorebi.antiRecall.repatchCss');
 });
 
 export const onBrowserWindowCreated = (window: BrowserWindow) => {
-  console.log('A window has just been created');
-  console.log(window);
+  window.webContents.on('did-stop-loading', () => patchWindow(window));
 };
+
+function patchWindow(window: BrowserWindow): void {
+  if (!window?.webContents || window.isDestroyed()) return;
+
+  const url = window.webContents.getURL();
+  if (!url.includes('#/main/message') && !url.includes('#/chat')) return;
+
+  const webContents = window.webContents as PatchedWebContents;
+  if (webContents.__komorebiAntiRecallPatched) return;
+  webContents.__komorebiAntiRecallPatched = true;
+  patchedWindows.add(window);
+
+  const originalSend = webContents.__qqntim_original_object?.send ?? webContents.send.bind(webContents);
+
+  const patchedSend = async (channel: string, ...args: unknown[]) => {
+    try {
+      if (args.length >= 2) {
+        await recoverRecalledMessagesInList(webContents, args);
+        await interceptRealtimeRecall(webContents, args);
+        cacheIncomingMessages(args);
+      }
+    } catch (error) {
+      log('Anti-recall patch failed:', error);
+    }
+
+    return originalSend(channel, ...args);
+  };
+
+  if (webContents.__qqntim_original_object) webContents.__qqntim_original_object.send = patchedSend;
+  else webContents.send = patchedSend;
+
+  log('Patched chat window:', url);
+}
+
+async function recoverRecalledMessagesInList(webContents: Electron.WebContents, args: unknown[]): Promise<void> {
+  const payload = asRecord(args[1]);
+  if (!Array.isArray(payload?.msgList) || payload.msgList.length === 0) return;
+
+  let peerUid = '';
+  const recalledIndexes: number[] = [];
+
+  for (const index in payload.msgList) {
+    const msg = asRecord(payload.msgList[index]);
+    peerUid = String(msg?.peerUid ?? '');
+
+    if (isRecallTip(msg)) {
+      recalledIndexes.push(Number(index));
+    }
+  }
+
+  if (recalledIndexes.length === 0) return;
+  recalledIndexes.sort((a, b) => b - a);
+
+  for (const index of recalledIndexes) {
+    const recallTip = asRecord(payload.msgList[index]);
+    if (!recallTip) continue;
+
+    const record = findCachedMessage(String(recallTip.msgId));
+    if (!record?.msg || typeof record.msg !== 'object') continue;
+
+    rememberRecalled(record);
+    const recovered = { ...record.msg, isOnlineMsg: true };
+    mergeRecoveredMessage(recallTip, recovered);
+  }
+
+  webContents.send(
+    'Komorebi.antiRecall.recallTipList',
+    recalledCache.filter(item => item.sender === peerUid || item.sender == null).map(item => item.id),
+  );
+}
+
+async function interceptRealtimeRecall(webContents: Electron.WebContents, args: unknown[]): Promise<void> {
+  const wrapper = asRecord(args[1]);
+  const cmdName = String(wrapper?.cmdName ?? '');
+  const payload = asRecord(wrapper?.payload);
+  if (!wrapper || !cmdName || !payload) return;
+
+  const isRecallUpdate =
+    (cmdName.includes('onMsgInfoListUpdate') || cmdName.includes('onActiveMsgInfoUpdate')) &&
+    Array.isArray(payload.msgList) &&
+    isRecallTip(payload.msgList[0]);
+
+  if (!isRecallUpdate) return;
+
+  const recallMsg = asRecord(payload.msgList[0]);
+  if (!recallMsg) return;
+  const msgId = String(recallMsg.msgId);
+  const record = findCachedMessage(msgId);
+
+  if (record) rememberRecalled(record);
+
+  webContents.send('Komorebi.antiRecall.recallTip', msgId);
+  wrapper.cmdName = 'none';
+  payload.msgList.pop();
+  log('Intercepted recall:', msgId);
+}
+
+function cacheIncomingMessages(args: unknown[]): void {
+  const wrapper = asRecord(args[1]);
+  const cmdName = String(wrapper?.cmdName ?? '');
+  const payload = asRecord(wrapper?.payload);
+  if (!wrapper || !cmdName || !payload) return;
+
+  const shouldCache =
+    ((cmdName.includes('onRecvMsg') || cmdName.includes('onRecvActiveMsg')) && Array.isArray(payload.msgList)) ||
+    (cmdName.includes('onAddSendMsg') && payload.msgRecord != null) ||
+    (cmdName.includes('onMsgInfoListUpdate') && Array.isArray(payload.msgList));
+
+  if (!shouldCache) return;
+
+  const list = Array.isArray(payload.msgList) ? payload.msgList : [payload.msgRecord];
+
+  for (const rawMsg of list) {
+    const msg = asRecord(rawMsg);
+    if (!msg?.msgId || isRecallTip(msg)) continue;
+
+    const msgId = String(msg.msgId);
+    let index = messageCache.findIndex(item => item.id === msgId);
+    if (index === -1) {
+      messageCache.push({ id: msgId, sender: msg.peerUid, msg });
+      index = messageCache.length - 1;
+    }
+
+    messageCache[index] = { id: msgId, sender: String(msg.peerUid ?? ''), msg };
+  }
+
+  if (messageCache.length > config.maxMsgSaveLimit) {
+    messageCache.splice(0, config.deleteMsgCountPerTime);
+  }
+}
+
+function isRecallTip(rawMsg: unknown): boolean {
+  const msg = asRecord(rawMsg);
+  const elements = Array.isArray(msg?.elements) ? msg.elements : [];
+  const firstElement = asRecord(elements[0]);
+  const grayTipElement = asRecord(firstElement?.grayTipElement);
+  const revoke = asRecord(grayTipElement?.revokeElement);
+
+  return msg?.msgType === 5 &&
+    msg.subMsgType === 4 &&
+    revoke != null &&
+    (config.isAntiRecallSelfMsg || !revoke.isSelfOperate);
+}
+
+function findCachedMessage(id: string): StoredMessage | undefined {
+  return recalledCache.find(item => item.id === id) ?? messageCache.find(item => item.id === id);
+}
+
+function rememberRecalled(record: StoredMessage): void {
+  if (recalledCache.some(item => item.id === record.id)) return;
+  recalledCache.push(record);
+}
+
+function mergeRecoveredMessage(target: QQMessage, recovered: QQMessage): void {
+  for (const key in recovered) {
+    if (['msgSeq', 'cntSeq', 'clientSeq', 'sendStatus', 'emojiLikesList'].includes(key)) continue;
+
+    const nextValue = recovered[key];
+    const oldValue = target[key];
+
+    if (['msgAttrs', 'msgMeta', 'generalFlags'].includes(key) && isPlainObject(nextValue) && isPlainObject(oldValue)) {
+      for (const oldKey in oldValue) {
+        if (Object.prototype.hasOwnProperty.call(oldValue, oldKey)) delete oldValue[oldKey];
+      }
+
+      target[key] = Object.assign(oldValue, nextValue);
+      continue;
+    }
+
+    target[key] = nextValue;
+  }
+}
+
+function loadConfig(): AntiRecallConfig {
+  return normalizeConfig(LiteLoader.api.config.get<Partial<AntiRecallConfig>>(PLUGIN_SLUG, DEFAULT_CONFIG));
+}
+
+function normalizeConfig(nextConfig: Partial<AntiRecallConfig> | null | undefined): AntiRecallConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    ...(nextConfig ?? {}),
+    maxMsgSaveLimit: Math.max(1, Number(nextConfig?.maxMsgSaveLimit ?? DEFAULT_CONFIG.maxMsgSaveLimit)),
+    deleteMsgCountPerTime: Math.max(1, Number(nextConfig?.deleteMsgCountPerTime ?? DEFAULT_CONFIG.deleteMsgCountPerTime)),
+  };
+}
+
+function broadcast(channel: string): void {
+  for (const window of patchedWindows) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send(channel);
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object';
+}
+
+function asRecord(value: unknown): QQPayloadWrapper | undefined {
+  return isPlainObject(value) ? value : undefined;
+}
+
+function log(...args: unknown[]): void {
+  console.log('\x1b[32m%s\x1b[0m', 'Komorebi Anti-Recall:', ...args);
+}
