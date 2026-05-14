@@ -22,10 +22,9 @@ const IPCExports = {
   repatchCss: (callback: () => void) => ipcRenderer.on('Komorebi.antiRecall.repatchCss', callback),
   recallTip: (callback: (_event: unknown, msgId: string) => void) => ipcRenderer.on('Komorebi.antiRecall.recallTip', callback),
   recallTipList: (callback: (_event: unknown, msgIds: string[]) => void) => ipcRenderer.on('Komorebi.antiRecall.recallTipList', callback),
-  repeatMessage: async (msgId: string): Promise<RepeatResult> => {
+  repeatMessage: async (msgId: string, peer: RepeatPeer): Promise<RepeatResult> => {
     try {
-      const peer = await ipcRenderer.invoke('Komorebi.repeater.getPeer', msgId) as RepeatPeer | null;
-      if (!peer) return { ok: false, error: '消息缓存里没找到这条，可能是历史消息或被插件遗漏了' };
+      if (!peer?.peerUid) return { ok: false, error: '没拿到当前会话的 peer 信息' };
 
       const webContentId = await ipcRenderer.invoke('Komorebi.repeater.getWebContentId') as number;
 

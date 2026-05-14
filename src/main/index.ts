@@ -82,21 +82,6 @@ ipcMain.handle('Komorebi.antiRecall.saveConfig', (_event, nextConfig: AntiRecall
 
 ipcMain.handle('Komorebi.antiRecall.getStorageStats', () => getStorageStats());
 
-ipcMain.handle('Komorebi.repeater.getPeer', (_event, msgId: string) => {
-  const record = messageCache.find(item => item.id === msgId);
-  if (!record) return null;
-
-  const msg = record.msg as Record<string, unknown>;
-  const peerUid = String(msg.peerUid ?? '');
-  if (!peerUid) return null;
-
-  return {
-    chatType: Number(msg.chatType ?? 0),
-    peerUid,
-    guildId: String(msg.guildId ?? ''),
-  };
-});
-
 ipcMain.handle('Komorebi.repeater.getWebContentId', event => event.sender.id);
 
 ipcMain.handle('Komorebi.antiRecall.clearStorage', async () => {

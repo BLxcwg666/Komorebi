@@ -616,7 +616,30 @@ function clampBorderWidth(value: string): number {
   return Math.min(8, Math.max(0.5, number));
 }
 
-let lastContextTargetMsgId: string | null = null;
+type RepeatPeer = { chatType: number; peerUid: string; guildId: string };
+type RepeatTarget = { msgId: string; peer: RepeatPeer };
+
+let lastContextTarget: RepeatTarget | null = null;
+
+function extractRepeatTarget(item: HTMLElement): RepeatTarget | null {
+  const messageEl = item.querySelector<HTMLElement>('.message') ?? item;
+  const vueRoots = (messageEl as HTMLElement & { __VUE__?: Array<{ props?: { msgRecord?: Record<string, unknown> } }> }).__VUE__;
+  const record = vueRoots?.[0]?.props?.msgRecord;
+  if (!record) return null;
+
+  const msgId = String(record.msgId ?? item.id ?? '');
+  const peerUid = String(record.peerUid ?? '');
+  if (!msgId || !peerUid) return null;
+
+  return {
+    msgId,
+    peer: {
+      chatType: Number(record.chatType ?? 0),
+      peerUid,
+      guildId: String(record.guildId ?? ''),
+    },
+  };
+}
 
 function setupRepeater(): void {
   injectRepeaterStyles();
@@ -771,7 +794,7 @@ function attachPlusOneBtn(item: HTMLElement): void {
   btn.addEventListener('click', event => {
     event.stopPropagation();
     event.preventDefault();
-    void runRepeat(msgId);
+    void runRepeat(extractRepeatTarget(item));
   });
 
   container.appendChild(btn);
@@ -781,7 +804,7 @@ function observeContextMenuForRepeatItem(): void {
   document.addEventListener('contextmenu', event => {
     const target = event.target instanceof HTMLElement ? event.target : null;
     const item = target?.closest<HTMLElement>('.ml-item');
-    lastContextTargetMsgId = item?.id ?? null;
+    lastContextTarget = item ? extractRepeatTarget(item) : null;
   }, true);
 
   const observer = new MutationObserver(mutations => {
@@ -799,7 +822,7 @@ function observeContextMenuForRepeatItem(): void {
 
 function injectRepeatMenuItem(menu: HTMLElement): void {
   if (menu.querySelector('.komorebi-repeat-menu-item')) return;
-  if (!lastContextTargetMsgId) return;
+  if (!lastContextTarget) return;
 
   const allItems = menu.querySelectorAll<HTMLElement>('.q-context-menu-item, .context-menu-item');
   let copyItem: HTMLElement | null = null;
@@ -821,11 +844,11 @@ function injectRepeatMenuItem(menu: HTMLElement): void {
   if (textNode) textNode.textContent = '复读';
   else item.textContent = '复读';
 
-  const targetId = lastContextTargetMsgId;
+  const target = lastContextTarget;
   item.addEventListener('click', event => {
     event.stopPropagation();
     event.preventDefault();
-    void runRepeat(targetId);
+    void runRepeat(target);
     closeContextMenu(menu);
   }, true);
 
@@ -846,10 +869,13 @@ function closeContextMenu(menu: HTMLElement): void {
   menu.remove();
 }
 
-async function runRepeat(msgId: string | null): Promise<void> {
-  if (!msgId) return;
+async function runRepeat(target: RepeatTarget | null): Promise<void> {
+  if (!target) {
+    showRepeatToast('复读失败：没拿到这条消息的会话信息');
+    return;
+  }
 
-  const result = await window.Komorebi.repeatMessage(msgId);
+  const result = await window.Komorebi.repeatMessage(target.msgId, target.peer);
   if (!result.ok) showRepeatToast(`复读失败：${result.error}`);
 }
 
