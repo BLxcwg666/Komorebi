@@ -35,12 +35,10 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
     item?.querySelector<HTMLElement>('.msg-content-container') ??
     item?.querySelector<HTMLElement>('.file-message--content');
 
-  // 判定这条消息「自己是否带图片」(.pic-element)，只用来决定角标用图片样式还是文字样式。
-  // 注意锚点始终保持在气泡 .msg-content-container 上：高亮框要框住整条消息，
-  // 而不是钻进里面的图片；图文混排时角标自然落在气泡右下角(压在图片右下角)。
-  // 回复引用里的缩略图、表情(.face-element)、卡片里的小图标都不是 .pic-element，不会误判。
-  const hasImage = container != null &&
-    Array.from(container.querySelectorAll<HTMLElement>('.pic-element')).some(el => !el.closest('.reply-element'));
+  const picElement = container == null
+    ? null
+    : Array.from(container.querySelectorAll<HTMLElement>('.pic-element')).find(el => !el.closest('.reply-element')) ?? null;
+  const hasImage = picElement != null;
 
   if (!container || container.classList.contains('gray-tip-message')) return;
   if (container.querySelector('.komorebi-recalled-tip')) return;
@@ -49,6 +47,7 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
 
   container.classList.add('komorebi-recalled-parent');
   container.classList.toggle('komorebi-recalled-text', !hasImage);
+  applyFrameRadius(container, picElement);
 
   if (!getCurrentConfig().enableTip) return;
 
@@ -56,6 +55,20 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
   tip.textContent = '已撤回';
   tip.className = 'komorebi-recalled-tip';
   container.appendChild(tip);
+}
+
+function applyFrameRadius(container: HTMLElement, picElement: HTMLElement | null): void {
+  container.style.removeProperty('--komorebi-frame-radius');
+  if (!picElement || container.querySelector('.text-element')) return;
+
+  const radius = roundedRadiusOf(picElement) ?? roundedRadiusOf(picElement.querySelector<HTMLElement>('img'));
+  if (radius) container.style.setProperty('--komorebi-frame-radius', radius);
+}
+
+function roundedRadiusOf(element: HTMLElement | null): string | undefined {
+  if (!element) return undefined;
+  const radius = getComputedStyle(element).borderRadius;
+  return radius && Number.parseFloat(radius) > 0 ? radius : undefined;
 }
 
 async function maybeDumpRecalledDom(msgId: string, item?: HTMLElement | null): Promise<void> {

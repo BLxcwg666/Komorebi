@@ -11,9 +11,19 @@ export async function applyCssFromConfig(): Promise<void> {
     .komorebi-recalled-parent {
       position: relative;
       overflow: visible !important;
-      border-radius: 10px;
-      ${config.enableShadow ? `outline: ${config.borderWidth}px solid ${config.mainColor} !important; outline-offset: -${config.borderWidth}px;` : ''}
     }
+
+    ${config.enableShadow ? `
+    .komorebi-recalled-parent::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: var(--komorebi-frame-radius, inherit);
+      border: ${config.borderWidth}px solid ${config.mainColor};
+      pointer-events: none;
+      z-index: 1;
+    }
+    ` : ''}
 
     .komorebi-recalled-parent.komorebi-recalled-text {
       box-sizing: border-box;
@@ -31,7 +41,7 @@ export async function applyCssFromConfig(): Promise<void> {
       position: absolute;
       right: 5px;
       bottom: 4px;
-      z-index: 1;
+      z-index: 2;
       padding: 2px 5px;
       border-radius: 999px;
       color: ${config.mainColor};
