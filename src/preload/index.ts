@@ -13,6 +13,23 @@ function randomUUID(): string {
 
 type RepeatPeer = { chatType: number; peerUid: string; guildId: string };
 type RepeatResult = { ok: true } | { ok: false; error: string };
+type RepeatPayload =
+  | { kind: 'forward' }
+  | { kind: 'send'; elements: Record<string, unknown>[] }
+  | { kind: 'unsupported' };
+
+function sendNtApi(webContentId: number, cmdName: string, payload: unknown): void {
+  ipcRenderer.send(
+    `RM_IPCFROM_RENDERER${webContentId}`,
+    {
+      peerId: webContentId,
+      callbackId: randomUUID(),
+      type: 'request',
+      eventName: 'ntApi',
+    },
+    { cmdName, cmdType: 'ntApi', payload },
+  );
+}
 
 const IPCExports = {
   getConfig: <Config>() => ipcRenderer.invoke('Komorebi.antiRecall.getConfig') as Promise<Config>,
@@ -27,36 +44,45 @@ const IPCExports = {
       if (!peer?.peerUid) return { ok: false, error: '没拿到当前会话的 peer 信息' };
 
       const webContentId = await ipcRenderer.invoke('Komorebi.repeater.getWebContentId') as number;
+      const payload = await ipcRenderer.invoke('Komorebi.repeater.getRepeatPayload', msgId) as RepeatPayload;
 
-      ipcRenderer.send(
-        `RM_IPCFROM_RENDERER${webContentId}`,
+      if (payload.kind === 'unsupported') {
+        return { ok: false, error: '这条撤回消息的内容暂不支持复读' };
+      }
+
+      if (payload.kind === 'send') {
+        // 撤回消息：服务端那条已变成灰字提示，转发会复读出灰字，所以用缓存的原文重新发一条
+        sendNtApi(webContentId, 'nodeIKernelMsgService/sendMsg', [
+          {
+            msgId: '0',
+            peer,
+            msgElements: payload.elements,
+            msgAttributeInfos: new Map(),
+          },
+          null,
+        ]);
+
+        return { ok: true };
+      }
+
+      sendNtApi(webContentId, 'nodeIKernelMsgService/forwardMsgWithComment', [
         {
-          peerId: webContentId,
-          callbackId: randomUUID(),
-          type: 'request',
-          eventName: 'ntApi',
+          commentElements: [],
+          dstContacts: [peer],
+          msgAttributeInfos: new Map(),
+          msgIds: [msgId],
+          srcContact: peer,
         },
-        {
-          cmdName: 'nodeIKernelMsgService/forwardMsgWithComment',
-          cmdType: 'ntApi',
-          payload: [
-            {
-              commentElements: [],
-              dstContacts: [peer],
-              msgAttributeInfos: new Map(),
-              msgIds: [msgId],
-              srcContact: peer,
-            },
-            null,
-          ],
-        },
-      );
+        null,
+      ]);
 
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   },
+  dumpRecalledDom: (msgId: string, html: string) =>
+    ipcRenderer.invoke('Komorebi.debug.dumpDom', msgId, html) as Promise<{ ok: boolean; path: string }>,
 };
 
 try {

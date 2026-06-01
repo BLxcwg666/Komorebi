@@ -14,6 +14,7 @@ interface AntiRecallConfig {
   isAntiRecallSelfMsg: boolean;
   maxMsgSaveLimit: number;
   deleteMsgCountPerTime: number;
+  enableDomDump: boolean;
 }
 
 interface StoredMessage {
@@ -55,10 +56,12 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   isAntiRecallSelfMsg: false,
   maxMsgSaveLimit: 10000,
   deleteMsgCountPerTime: 500,
+  enableDomDump: false,
 };
 
 const dataDir = path.join(LiteLoader.path.data, PLUGIN_SLUG);
 const imageDir = path.join(dataDir, 'images');
+const debugDir = path.join(dataDir, 'debug');
 const dbFilePath = path.join(dataDir, 'recalled-messages.db');
 const require = createRequire(import.meta.url);
 
@@ -83,6 +86,10 @@ ipcMain.handle('Komorebi.antiRecall.saveConfig', (_event, nextConfig: AntiRecall
 ipcMain.handle('Komorebi.antiRecall.getStorageStats', () => getStorageStats());
 
 ipcMain.handle('Komorebi.repeater.getWebContentId', event => event.sender.id);
+
+ipcMain.handle('Komorebi.repeater.getRepeatPayload', async (_event, msgId: string) => getRepeatPayload(String(msgId)));
+
+ipcMain.handle('Komorebi.debug.dumpDom', (_event, msgId: string, html: string) => dumpDom(String(msgId), String(html ?? '')));
 
 ipcMain.handle('Komorebi.antiRecall.clearStorage', async () => {
   const result = await dialog.showMessageBox({
@@ -453,6 +460,89 @@ function mergeRecoveredMessage(target: QQMessage, recovered: QQMessage): void {
   }
 }
 
+type RepeatPayload =
+  | { kind: 'forward' }
+  | { kind: 'send'; elements: Record<string, unknown>[] }
+  | { kind: 'unsupported' };
+
+async function getRepeatPayload(msgId: string): Promise<RepeatPayload> {
+  const recalled = recalledCache.find(item => item.id === msgId) ?? readPersistedMessage(msgId);
+  if (!recalled?.msg || typeof recalled.msg !== 'object') return { kind: 'forward' };
+
+  const rawElements = Array.isArray(recalled.msg.elements) ? recalled.msg.elements : [];
+  const elements = buildRepeatElements(rawElements);
+  if (elements.length === 0) return { kind: 'unsupported' };
+
+  return { kind: 'send', elements };
+}
+
+function buildRepeatElements(rawElements: unknown[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+
+  for (const raw of rawElements) {
+    const element = asRecord(raw);
+    if (!element) continue;
+
+    const type = Number(element.elementType ?? 0);
+
+    if (type === 1) {
+      const text = asRecord(element.textElement);
+      if (!text) continue;
+      out.push({
+        elementType: 1,
+        elementId: '',
+        textElement: {
+          content: text.content ?? '',
+          atType: text.atType ?? 0,
+          atUid: text.atUid ?? '0',
+          atTinyId: text.atTinyId ?? '0',
+          atNtUid: text.atNtUid ?? '',
+        },
+      });
+    } else if (type === 2) {
+      const pic = asRecord(element.picElement);
+      const file = pic ? findExistingImagePath(pic) : undefined;
+      if (!pic || !file) continue;
+      out.push({ elementType: 2, elementId: '', picElement: { ...pic, sourcePath: file } });
+    } else if (type === 6) {
+      const clone = cloneElement(element);
+      if (clone) out.push(clone);
+    } else if (type === 7) {
+      // 回复引用：复读时不再带上原引用，跳过
+      continue;
+    } else {
+      const clone = cloneElement(element);
+      if (clone) out.push(clone);
+    }
+  }
+
+  return out;
+}
+
+function cloneElement(element: QQPayloadWrapper): Record<string, unknown> | null {
+  try {
+    const clone = JSON.parse(JSON.stringify(element)) as Record<string, unknown>;
+    clone.elementId = '';
+    return clone;
+  } catch {
+    return null;
+  }
+}
+
+function dumpDom(msgId: string, html: string): { ok: boolean; path: string } {
+  try {
+    fs.mkdirSync(debugDir, { recursive: true });
+    const safeId = msgId.replace(/[^\w-]/g, '_') || 'unknown';
+    const filePath = path.join(debugDir, `${safeId}.html`);
+    fs.writeFileSync(filePath, html, 'utf8');
+    log('Dumped recalled DOM:', filePath);
+    return { ok: true, path: debugDir };
+  } catch (error) {
+    log('Failed to dump recalled DOM:', error);
+    return { ok: false, path: debugDir };
+  }
+}
+
 function loadConfig(): AntiRecallConfig {
   return normalizeConfig(LiteLoader.api.config.get<Partial<AntiRecallConfig>>(PLUGIN_SLUG, DEFAULT_CONFIG));
 }
@@ -462,6 +552,7 @@ function normalizeConfig(nextConfig: Partial<AntiRecallConfig> | null | undefine
     ...DEFAULT_CONFIG,
     ...(nextConfig ?? {}),
     saveDb: nextConfig?.saveDb === true,
+    enableDomDump: nextConfig?.enableDomDump === true,
     blockQQNTUpdate: nextConfig?.blockQQNTUpdate !== false,
     borderWidth: normalizeBorderWidth(nextConfig?.borderWidth),
     maxMsgSaveLimit: normalizeLimit(nextConfig?.maxMsgSaveLimit, DEFAULT_CONFIG.maxMsgSaveLimit),

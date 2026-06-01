@@ -12,6 +12,7 @@ interface AntiRecallConfig {
   enableMentionHighlight: boolean;
   mentionOthersColor: string;
   mentionSelfColor: string;
+  enableDomDump: boolean;
 }
 
 interface StorageStats {
@@ -35,6 +36,7 @@ const DEFAULT_CONFIG: AntiRecallConfig = {
   enableMentionHighlight: true,
   mentionOthersColor: '#ff9933',
   mentionSelfColor: '#4a9eff',
+  enableDomDump: false,
 };
 
 let recalledIds: string[] = [];
@@ -209,6 +211,14 @@ async function renderSettings(container: HTMLElement): Promise<void> {
         <input id="deleteMsgCountPerTime" type="number" min="-1" max="99999" />
       </label>
 
+      <label class="row">
+        <span>
+          <b>调试：导出撤回结构</b>
+          <small>开启后，被标记撤回的消息会把整段 HTML 导出到插件数据目录的 debug 文件夹，用于排查标记错位。平时请关闭。</small>
+        </span>
+        <button id="domDump" class="switch" type="button" aria-pressed="false"><span></span></button>
+      </label>
+
       <style>
         .komorebi-settings { padding: 20px; color: var(--text_primary); }
         .komorebi-settings h1 { margin: 0 0 8px; font-size: 22px; }
@@ -246,6 +256,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   const borderWidth = settings.querySelector<HTMLInputElement>('#borderWidth');
   const maxMsgSaveLimit = settings.querySelector<HTMLInputElement>('#maxMsgSaveLimit');
   const deleteMsgCountPerTime = settings.querySelector<HTMLInputElement>('#deleteMsgCountPerTime');
+  const domDump = settings.querySelector<HTMLButtonElement>('#domDump');
 
   setSwitch(saveDb, currentConfig.saveDb);
   setSwitch(antiSelf, currentConfig.isAntiRecallSelfMsg);
@@ -254,6 +265,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   setSwitch(shadow, currentConfig.enableShadow);
   setSwitch(tip, currentConfig.enableTip);
   setSwitch(mentionHighlight, currentConfig.enableMentionHighlight);
+  setSwitch(domDump, currentConfig.enableDomDump);
   if (mainColor) mainColor.value = currentConfig.mainColor;
   if (mentionOthersColor) mentionOthersColor.value = currentConfig.mentionOthersColor;
   if (mentionSelfColor) mentionSelfColor.value = currentConfig.mentionSelfColor;
@@ -279,6 +291,7 @@ async function renderSettings(container: HTMLElement): Promise<void> {
   shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
   tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
   mentionHighlight?.addEventListener('click', () => toggleSettingSwitch(mentionHighlight, 'enableMentionHighlight'));
+  domDump?.addEventListener('click', () => toggleSettingSwitch(domDump, 'enableDomDump'));
   mainColor?.addEventListener('change', () => saveSetting({ mainColor: mainColor.value }));
   mentionOthersColor?.addEventListener('change', () => saveSetting({ mentionOthersColor: mentionOthersColor.value }));
   mentionSelfColor?.addEventListener('change', () => saveSetting({ mentionSelfColor: mentionSelfColor.value }));
@@ -322,7 +335,7 @@ function isSwitchActive(button: HTMLButtonElement): boolean {
 
 function toggleSettingSwitch(
   button: HTMLButtonElement,
-  key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableMessageAnimation' | 'enableShadow' | 'enableTip' | 'enableMentionHighlight',
+  key: 'isAntiRecallSelfMsg' | 'blockQQNTUpdate' | 'enableMessageAnimation' | 'enableShadow' | 'enableTip' | 'enableMentionHighlight' | 'enableDomDump',
 ): void {
   const next = !isSwitchActive(button);
   setSwitch(button, next);
@@ -575,7 +588,7 @@ async function markRecalledById(msgId: string): Promise<void> {
 }
 
 function markRecalledItem(msgId: string, item?: HTMLElement): void {
-  let container =
+  const container =
     document.getElementById(`${msgId}-msgContainerMsgContent`) ??
     document.getElementById(`${msgId}-msgContent`)?.parentElement ??
     document.getElementById(`ml-${msgId}`)?.querySelector<HTMLElement>('.msg-content-container')?.parentElement ??
@@ -583,14 +596,17 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
     item?.querySelector<HTMLElement>('.msg-content-container') ??
     item?.querySelector<HTMLElement>('.file-message--content');
 
-  const hasImage = container?.querySelector('img') != null;
-
-  if (hasImage) {
-    container = container.querySelector<HTMLElement>('img')?.parentElement ?? container;
-  }
+  // 判定这条消息「自己是否带图片」(.pic-element)，只用来决定角标用图片样式还是文字样式。
+  // 注意锚点始终保持在气泡 .msg-content-container 上：高亮框要框住整条消息，
+  // 而不是钻进里面的图片；图文混排时角标自然落在气泡右下角(压在图片右下角)。
+  // 回复引用里的缩略图、表情(.face-element)、卡片里的小图标都不是 .pic-element，不会误判。
+  const hasImage = container != null &&
+    Array.from(container.querySelectorAll<HTMLElement>('.pic-element')).some(el => !el.closest('.reply-element'));
 
   if (!container || container.classList.contains('gray-tip-message')) return;
   if (container.querySelector('.komorebi-recalled-tip')) return;
+
+  void maybeDumpRecalledDom(msgId, item ?? container.closest<HTMLElement>('.ml-item'));
 
   container.classList.add('komorebi-recalled-parent');
   container.classList.toggle('komorebi-recalled-text', !hasImage);
@@ -601,6 +617,20 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
   tip.textContent = '已撤回';
   tip.className = 'komorebi-recalled-tip';
   container.appendChild(tip);
+}
+
+const dumpedDomIds = new Set<string>();
+let dumpToastShown = false;
+
+async function maybeDumpRecalledDom(msgId: string, item?: HTMLElement | null): Promise<void> {
+  if (!currentConfig.enableDomDump || !item || dumpedDomIds.has(msgId)) return;
+  dumpedDomIds.add(msgId);
+
+  const result = await window.Komorebi.dumpRecalledDom(msgId, item.outerHTML);
+  if (result.ok && !dumpToastShown) {
+    dumpToastShown = true;
+    showRepeatToast(`已导出撤回结构到：${result.path}`);
+  }
 }
 
 function clampLimit(value: string, max: number): number {
