@@ -104,7 +104,9 @@ function interceptSingleForward(payload: unknown): boolean {
           forwardSingle(webContentId, dst, msgId, src);
         }
       }
-    } catch {}
+    } catch {
+      //
+    }
   })();
 
   return true;
@@ -122,7 +124,9 @@ function interceptSingleForward(payload: unknown): boolean {
         if (interceptSingleForward(data?.payload as Parameters<typeof interceptSingleForward>[0])) return; // 已接管，阻断原生转发
       }
     }
-  } catch {}
+  } catch {
+    //
+  }
 
   return originalIpcSend(channel, ...(args as [unknown, ...unknown[]]));
 };
