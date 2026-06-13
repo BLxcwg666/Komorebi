@@ -3,7 +3,7 @@ import { broadcast, patchWindow } from './anti-recall';
 import { recalledCache } from './cache';
 import { getConfig, setConfig } from './config';
 import { getRepeatPayload } from './repeater';
-import { clearPersistedMessages, dumpDom, getStorageStats } from './storage';
+import { clearPersistedMessages, dumpDom, dumpForward, getStorageStats } from './storage';
 import { setupUpdateBlocker } from './update-blocker';
 import type { AntiRecallConfig } from './types';
 
@@ -22,7 +22,11 @@ ipcMain.handle('Komorebi.repeater.getWebContentId', event => event.sender.id);
 
 ipcMain.handle('Komorebi.repeater.getRepeatPayload', async (_event, msgId: string) => getRepeatPayload(String(msgId)));
 
+ipcMain.handle('Komorebi.repeater.getRecalledIds', () => recalledCache.map(item => String(item.id)));
+
 ipcMain.handle('Komorebi.debug.dumpDom', (_event, msgId: string, html: string) => dumpDom(String(msgId), String(html ?? '')));
+
+ipcMain.handle('Komorebi.debug.dumpForward', (_event, cmdName: string, json: string) => dumpForward(String(cmdName), String(json ?? '')));
 
 ipcMain.handle('Komorebi.antiRecall.clearStorage', async () => {
   const result = await dialog.showMessageBox({

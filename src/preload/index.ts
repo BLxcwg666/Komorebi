@@ -18,8 +18,10 @@ type RepeatPayload =
   | { kind: 'send'; elements: Record<string, unknown>[] }
   | { kind: 'unsupported' };
 
+const originalIpcSend = ipcRenderer.send.bind(ipcRenderer);
+
 function sendNtApi(webContentId: number, cmdName: string, payload: unknown): void {
-  ipcRenderer.send(
+  originalIpcSend(
     `RM_IPCFROM_RENDERER${webContentId}`,
     {
       peerId: webContentId,
@@ -30,6 +32,100 @@ function sendNtApi(webContentId: number, cmdName: string, payload: unknown): voi
     { cmdName, cmdType: 'ntApi', payload },
   );
 }
+
+function safeStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(
+    value,
+    (_key, val) => {
+      if (val instanceof Map) return { __map__: [...val.entries()] };
+      if (typeof val === 'object' && val !== null) {
+        if (seen.has(val)) return '[Circular]';
+        seen.add(val);
+      }
+      return val;
+    },
+    2,
+  );
+}
+
+const recalledMsgIds = new Set<string>();
+ipcRenderer.on('Komorebi.antiRecall.recallTip', (_event, id: string) => recalledMsgIds.add(String(id)));
+ipcRenderer.on('Komorebi.antiRecall.recallTipList', (_event, ids: string[]) =>
+  (Array.isArray(ids) ? ids : []).forEach(id => recalledMsgIds.add(String(id))),
+);
+void ipcRenderer
+  .invoke('Komorebi.repeater.getRecalledIds')
+  .then((ids: unknown) => (Array.isArray(ids) ? ids : []).forEach(id => recalledMsgIds.add(String(id))))
+  .catch(() => {});
+
+let cachedWebContentId: number | null = null;
+async function getWebContentId(): Promise<number> {
+  if (cachedWebContentId == null) cachedWebContentId = (await ipcRenderer.invoke('Komorebi.repeater.getWebContentId')) as number;
+  return cachedWebContentId;
+}
+
+function forwardSingle(webContentId: number, dst: RepeatPeer, msgId: string, src: RepeatPeer): void {
+  sendNtApi(webContentId, 'nodeIKernelMsgService/forwardMsgWithComment', [
+    { commentElements: [], dstContacts: [dst], msgAttributeInfos: new Map(), msgIds: [msgId], srcContact: src },
+    null,
+  ]);
+}
+
+function sendRestored(webContentId: number, dst: RepeatPeer, elements: Record<string, unknown>[]): void {
+  sendNtApi(webContentId, 'nodeIKernelMsgService/sendMsg', [
+    { msgId: '0', peer: dst, msgElements: elements, msgAttributeInfos: new Map() },
+    null,
+  ]);
+}
+
+function interceptSingleForward(payload: unknown): boolean {
+  const args = (Array.isArray(payload) ? payload[0] : payload) as
+    | { msgIds?: unknown; dstContacts?: unknown; srcContact?: unknown }
+    | undefined;
+  const msgIds = Array.isArray(args?.msgIds) ? args.msgIds.map(String) : [];
+  if (!msgIds.some(id => recalledMsgIds.has(id))) return false;
+
+  const dstContacts = (Array.isArray(args?.dstContacts) ? args.dstContacts : []) as RepeatPeer[];
+  const src = args?.srcContact as RepeatPeer;
+
+  void (async () => {
+    try {
+      const webContentId = await getWebContentId();
+      for (const dst of dstContacts) {
+        for (const msgId of msgIds) {
+          if (recalledMsgIds.has(msgId)) {
+            const rp = (await ipcRenderer.invoke('Komorebi.repeater.getRepeatPayload', msgId)) as RepeatPayload;
+            if (rp.kind === 'send') {
+              sendRestored(webContentId, dst, rp.elements);
+              continue;
+            }
+          }
+          forwardSingle(webContentId, dst, msgId, src);
+        }
+      }
+    } catch {}
+  })();
+
+  return true;
+}
+
+(ipcRenderer as unknown as { send: typeof ipcRenderer.send }).send = (channel: string, ...args: unknown[]) => {
+  try {
+    if (typeof channel === 'string' && channel.startsWith('RM_IPCFROM_RENDERER')) {
+      const data = args[1] as { cmdName?: string; payload?: unknown } | undefined;
+      const cmdName = String(data?.cmdName ?? '');
+
+      if (cmdName.includes('multiForwardMsgWithComment')) {
+        void ipcRenderer.invoke('Komorebi.debug.dumpForward', cmdName, safeStringify(data?.payload)).catch(() => {});
+      } else if (cmdName.includes('forwardMsgWithComment')) {
+        if (interceptSingleForward(data?.payload as Parameters<typeof interceptSingleForward>[0])) return; // 已接管，阻断原生转发
+      }
+    }
+  } catch {}
+
+  return originalIpcSend(channel, ...(args as [unknown, ...unknown[]]));
+};
 
 const IPCExports = {
   getConfig: <Config>() => ipcRenderer.invoke('Komorebi.antiRecall.getConfig') as Promise<Config>,

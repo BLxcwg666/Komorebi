@@ -91,6 +91,22 @@ export function dumpDom(msgId: string, html: string): { ok: boolean; path: strin
   }
 }
 
+let forwardDumpSeq = 0;
+export function dumpForward(cmdName: string, json: string): { ok: boolean; path: string } {
+  try {
+    fs.mkdirSync(debugDir, { recursive: true });
+    const safeCmd = cmdName.split('/').pop()?.replace(/[^\w-]/g, '_') || 'forward';
+    forwardDumpSeq += 1;
+    const filePath = path.join(debugDir, `forward-${safeCmd}-${forwardDumpSeq}.json`);
+    fs.writeFileSync(filePath, json, 'utf8');
+    log('Dumped forward payload:', filePath);
+    return { ok: true, path: filePath };
+  } catch (error) {
+    log('Failed to dump forward payload:', error);
+    return { ok: false, path: debugDir };
+  }
+}
+
 function getSqliteDb(): SqliteDatabase | undefined {
   if (sqliteDb !== undefined) return sqliteDb ?? undefined;
 
