@@ -5,9 +5,11 @@ import { getConfig, setConfig } from './config';
 import { getRepeatPayload } from './repeater';
 import { clearPersistedMessages, dumpDom, dumpForward, getStorageStats } from './storage';
 import { setupUpdateBlocker } from './update-blocker';
+import { setupDevReload } from './dev-reload';
 import type { AntiRecallConfig } from './types';
 
 setupUpdateBlocker();
+setupDevReload();
 
 ipcMain.handle('Komorebi.antiRecall.getConfig', () => getConfig());
 
