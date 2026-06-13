@@ -27,13 +27,17 @@ export async function markRecalledById(msgId: string): Promise<void> {
 }
 
 function markRecalledItem(msgId: string, item?: HTMLElement): void {
+  const domItem = item ?? document.querySelector<HTMLElement>(`.ml-item[id='${msgId}']`) ?? undefined;
+  void maybeDumpRecalledDom(msgId, domItem);
+
   const container =
     document.getElementById(`${msgId}-msgContainerMsgContent`) ??
     document.getElementById(`${msgId}-msgContent`)?.parentElement ??
     document.getElementById(`ml-${msgId}`)?.querySelector<HTMLElement>('.msg-content-container')?.parentElement ??
     document.getElementById(`ark-msg-content-container_${msgId}`)?.parentElement ??
     item?.querySelector<HTMLElement>('.msg-content-container') ??
-    item?.querySelector<HTMLElement>('.file-message--content');
+    item?.querySelector<HTMLElement>('.file-message--content') ??
+    item?.querySelector<HTMLElement>('.forward-msg');
 
   const picElement = container == null
     ? null
@@ -42,8 +46,6 @@ function markRecalledItem(msgId: string, item?: HTMLElement): void {
 
   if (!container || container.classList.contains('gray-tip-message')) return;
   if (container.querySelector('.komorebi-recalled-tip')) return;
-
-  void maybeDumpRecalledDom(msgId, item ?? container.closest<HTMLElement>('.ml-item'));
 
   container.classList.add('komorebi-recalled-parent');
   container.classList.toggle('komorebi-recalled-text', !hasImage);
