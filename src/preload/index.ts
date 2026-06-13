@@ -79,6 +79,42 @@ function sendRestored(webContentId: number, dst: RepeatPeer, elements: Record<st
   ]);
 }
 
+// 单条消息最多能挂 20 个回应，超出服务端直接拒绝
+const REACTION_MAX = 20;
+const REACTION_INTERVAL_MS = 80;
+
+// NTQQ 可作为回应的系统小黄脸（QSysFace）id 池，emojiType 固定为 '1'
+const REACTION_FACE_POOL = [
+  '4', '5', '8', '9', '10', '12', '14', '16', '21', '23',
+  '24', '25', '26', '27', '28', '29', '30', '32', '33', '34',
+  '38', '39', '41', '42', '43', '49', '53', '60', '63', '66',
+  '74', '75', '76', '78', '79', '85', '89', '96', '97', '98',
+  '99', '100', '101', '102', '103', '104', '106', '109', '111', '116',
+  '118', '120', '122', '123', '124', '125', '129', '144', '147', '171',
+  '173', '174', '175', '176', '179', '180', '181', '182', '183', '201',
+  '203', '212', '214', '219', '222', '227', '232', '240', '243', '246',
+];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function pickRandom<T>(source: readonly T[], count: number): T[] {
+  const pool = [...source];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+  }
+  return pool.slice(0, Math.min(count, pool.length));
+}
+
+function setReaction(webContentId: number, peer: RepeatPeer, msgSeq: string, emojiId: string): void {
+  sendNtApi(webContentId, 'nodeIKernelMsgService/setMsgEmojiLikes', [
+    { peer, msgSeq, emojiId, emojiType: '1', setEmoji: true },
+    null,
+  ]);
+}
+
 function interceptSingleForward(payload: unknown): boolean {
   const args = (Array.isArray(payload) ? payload[0] : payload) as
     | { msgIds?: unknown; dstContacts?: unknown; srcContact?: unknown }
@@ -177,6 +213,24 @@ const IPCExports = {
       ]);
 
       return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  },
+  spamReactions: async (msgSeq: string, peer: RepeatPeer): Promise<{ ok: true; count: number } | { ok: false; error: string }> => {
+    try {
+      if (!peer?.peerUid) return { ok: false, error: '没拿到当前会话的 peer 信息' };
+      if (!msgSeq) return { ok: false, error: '没拿到这条消息的 msgSeq' };
+
+      const webContentId = await getWebContentId();
+      const faces = pickRandom(REACTION_FACE_POOL, REACTION_MAX);
+
+      for (const emojiId of faces) {
+        setReaction(webContentId, peer, String(msgSeq), emojiId);
+        await sleep(REACTION_INTERVAL_MS);
+      }
+
+      return { ok: true, count: faces.length };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }

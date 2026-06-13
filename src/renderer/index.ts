@@ -1,6 +1,7 @@
 import { observeMessageEntrances } from './animation';
 import { applyRecalledIds, markRecalledById, markRecalledInView } from './anti-recall';
 import { applyCssFromConfig } from './css';
+import { setupReaction } from './reaction';
 import { setupRepeater } from './repeater';
 import { renderSettings } from './settings';
 
@@ -28,6 +29,7 @@ async function setupMainWindowPatches(): Promise<void> {
   await applyCssFromConfig();
   observeMessageEntrances();
   setupRepeater();
+  setupReaction();
 
   let throttled = false;
   const observer = new MutationObserver(mutations => {
