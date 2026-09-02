@@ -41,7 +41,7 @@ export function cacheIncomingMessages(args: unknown[]): void {
     const msgId = String(msg.msgId);
     let index = messageCache.findIndex(item => item.id === msgId);
     if (index === -1) {
-      messageCache.push({ id: msgId, sender: msg.peerUid, msg });
+      messageCache.push({ id: msgId, sender: String(msg.peerUid ?? ''), msg });
       index = messageCache.length - 1;
     }
 

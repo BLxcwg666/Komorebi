@@ -108,12 +108,14 @@ function pickRandom<T>(source: readonly T[], count: number): T[] {
   return pool.slice(0, Math.min(count, pool.length));
 }
 
-function setReaction(webContentId: number, peer: RepeatPeer, msgSeq: string, emojiId: string): void {
+function setReaction(webContentId: number, peer: RepeatPeer, msgSeq: string, emojiId: string, enabled: boolean): void {
   sendNtApi(webContentId, 'nodeIKernelMsgService/setMsgEmojiLikes', [
-    { peer, msgSeq, emojiId, emojiType: '1', setEmoji: true },
+    { peer, msgSeq, emojiId, emojiType: '1', setEmoji: enabled },
     null,
   ]);
 }
+
+let reactionSpamRun = 0;
 
 function interceptSingleForward(payload: unknown): boolean {
   const args = (Array.isArray(payload) ? payload[0] : payload) as
@@ -217,23 +219,43 @@ const IPCExports = {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   },
-  spamReactions: async (msgSeq: string, peer: RepeatPeer): Promise<{ ok: true; count: number } | { ok: false; error: string }> => {
+  spamReactions: async (msgSeq: string, peer: RepeatPeer, mode: 'once' | 'loop'): Promise<{ ok: true; count: number; stopped?: boolean } | { ok: false; error: string }> => {
     try {
       if (!peer?.peerUid) return { ok: false, error: '没拿到当前会话的 peer 信息' };
       if (!msgSeq) return { ok: false, error: '没拿到这条消息的 msgSeq' };
 
       const webContentId = await getWebContentId();
-      const faces = pickRandom(REACTION_FACE_POOL, REACTION_MAX);
+      const run = ++reactionSpamRun;
+      let count = 0;
+      let activeFaces: string[] = [];
 
-      for (const emojiId of faces) {
-        setReaction(webContentId, peer, String(msgSeq), emojiId);
-        await sleep(REACTION_INTERVAL_MS);
-      }
+      do {
+        const faces = pickRandom(REACTION_FACE_POOL, REACTION_MAX);
+        activeFaces = [];
+        for (const emojiId of faces) {
+          if (run !== reactionSpamRun) break;
+          setReaction(webContentId, peer, String(msgSeq), emojiId, true);
+          activeFaces.push(emojiId);
+          count += 1;
+          await sleep(REACTION_INTERVAL_MS);
+        }
 
-      return { ok: true, count: faces.length };
+        if (mode === 'once' && run === reactionSpamRun) return { ok: true, count };
+
+        for (const emojiId of activeFaces) {
+          setReaction(webContentId, peer, String(msgSeq), emojiId, false);
+          await sleep(REACTION_INTERVAL_MS);
+        }
+        activeFaces = [];
+      } while (run === reactionSpamRun);
+
+      return { ok: true, count, stopped: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  },
+  stopReactionSpam: (): void => {
+    reactionSpamRun += 1;
   },
   dumpRecalledDom: (msgId: string, html: string) =>
     ipcRenderer.invoke('Komorebi.debug.dumpDom', msgId, html) as Promise<{ ok: boolean; path: string }>,

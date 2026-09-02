@@ -89,14 +89,14 @@ async function interceptRealtimeRecall(webContents: Electron.WebContents, args: 
   const payload = asRecord(wrapper?.payload);
   if (!wrapper || !cmdName || !payload) return;
 
+  const msgList = Array.isArray(payload.msgList) ? payload.msgList : [];
   const isRecallUpdate =
     (cmdName.includes('onMsgInfoListUpdate') || cmdName.includes('onActiveMsgInfoUpdate')) &&
-    Array.isArray(payload.msgList) &&
-    isRecallTip(payload.msgList[0]);
+    isRecallTip(msgList[0]);
 
   if (!isRecallUpdate) return;
 
-  const recallMsg = asRecord(payload.msgList[0]);
+  const recallMsg = asRecord(msgList[0]);
   if (!recallMsg) return;
   const msgId = String(recallMsg.msgId);
   const record = await findCachedMessage(msgId);
@@ -108,7 +108,7 @@ async function interceptRealtimeRecall(webContents: Electron.WebContents, args: 
 
   webContents.send('Komorebi.antiRecall.recallTip', msgId);
   wrapper.cmdName = 'none';
-  payload.msgList.pop();
+  msgList.pop();
   log('Intercepted recall:', msgId);
 }
 

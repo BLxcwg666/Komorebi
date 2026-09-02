@@ -13,6 +13,7 @@ export interface AntiRecallConfig {
   mentionOthersColor: string;
   mentionSelfColor: string;
   enableDomDump: boolean;
+  reactionSpamMode: 'once' | 'loop';
 }
 
 export interface StorageStats {
@@ -37,6 +38,7 @@ export const DEFAULT_CONFIG: AntiRecallConfig = {
   mentionOthersColor: '#ff9933',
   mentionSelfColor: '#4a9eff',
   enableDomDump: false,
+  reactionSpamMode: 'once',
 };
 
 let currentConfig: AntiRecallConfig = { ...DEFAULT_CONFIG };

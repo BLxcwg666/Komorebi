@@ -10,6 +10,7 @@ export interface AntiRecallConfig {
   maxMsgSaveLimit: number;
   deleteMsgCountPerTime: number;
   enableDomDump: boolean;
+  reactionSpamMode: 'once' | 'loop';
 }
 
 export interface StoredMessage {

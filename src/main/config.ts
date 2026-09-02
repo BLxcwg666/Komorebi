@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG: AntiRecallConfig = {
   maxMsgSaveLimit: 10000,
   deleteMsgCountPerTime: 500,
   enableDomDump: false,
+  reactionSpamMode: 'once',
 };
 
 export const dataDir = path.join(LiteLoader.path.data, PLUGIN_SLUG);
@@ -45,6 +46,7 @@ function normalizeConfig(nextConfig: Partial<AntiRecallConfig> | null | undefine
     saveDb: nextConfig?.saveDb === true,
     enableDomDump: nextConfig?.enableDomDump === true,
     blockQQNTUpdate: nextConfig?.blockQQNTUpdate !== false,
+    reactionSpamMode: nextConfig?.reactionSpamMode === 'loop' ? 'loop' : 'once',
     borderWidth: normalizeBorderWidth(nextConfig?.borderWidth),
     maxMsgSaveLimit: normalizeLimit(nextConfig?.maxMsgSaveLimit, DEFAULT_CONFIG.maxMsgSaveLimit),
     deleteMsgCountPerTime: normalizeLimit(nextConfig?.deleteMsgCountPerTime, DEFAULT_CONFIG.deleteMsgCountPerTime),

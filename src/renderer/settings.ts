@@ -48,6 +48,17 @@ export async function renderSettings(container: HTMLElement): Promise<void> {
 
       <label class="row">
         <span>
+          <b>表情轰炸模式</b>
+          <small>贴满后停止，或贴满 20 个后逐个取消并循环，直到手动停止。</small>
+        </span>
+        <select id="reactionSpamMode">
+          <option value="once">贴满后停止</option>
+          <option value="loop">循环贴上并取消</option>
+        </select>
+      </label>
+
+      <label class="row">
+        <span>
           <b>显示高亮阴影</b>
           <small>被撤回的消息会显示一圈主题色内描边。</small>
         </span>
@@ -135,7 +146,7 @@ export async function renderSettings(container: HTMLElement): Promise<void> {
         .komorebi-settings .storage-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 10px; padding: 12px; border-radius: 8px; background: rgba(127, 127, 127, 0.08); }
         .komorebi-settings .storage-panel div { display: grid; gap: 4px; min-width: 0; }
         .komorebi-settings small { color: var(--text_secondary); }
-        .komorebi-settings input[type="number"] { width: 120px; box-sizing: border-box; padding: 6px 8px; border: 1px solid rgba(127, 127, 127, 0.28); border-radius: 6px; color: var(--text_primary); background: rgba(127, 127, 127, 0.12); }
+        .komorebi-settings input[type="number"], .komorebi-settings select { width: 150px; box-sizing: border-box; padding: 6px 8px; border: 1px solid rgba(127, 127, 127, 0.28); border-radius: 6px; color: var(--text_primary); background: var(--bg_bottom_standard, rgba(127, 127, 127, 0.12)); }
         .komorebi-settings button { padding: 6px 12px; border: 1px solid rgba(127, 127, 127, 0.24); border-radius: 6px; color: var(--text_primary); background: transparent; cursor: pointer; }
         .komorebi-settings .switch { position: relative; flex: 0 0 auto; width: 46px; height: 26px; padding: 0; border: 0; border-radius: 999px; background: rgba(127, 127, 127, 0.34); transition: background 160ms ease; }
         .komorebi-settings .switch span { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28); transition: transform 160ms ease; }
@@ -154,6 +165,7 @@ export async function renderSettings(container: HTMLElement): Promise<void> {
   const antiSelf = settings.querySelector<HTMLButtonElement>('#antiSelf');
   const blockUpdate = settings.querySelector<HTMLButtonElement>('#blockUpdate');
   const messageAnimation = settings.querySelector<HTMLButtonElement>('#messageAnimation');
+  const reactionSpamMode = settings.querySelector<HTMLSelectElement>('#reactionSpamMode');
   const shadow = settings.querySelector<HTMLButtonElement>('#shadow');
   const tip = settings.querySelector<HTMLButtonElement>('#tip');
   const mainColor = settings.querySelector<HTMLInputElement>('#mainColor');
@@ -169,6 +181,7 @@ export async function renderSettings(container: HTMLElement): Promise<void> {
   setSwitch(antiSelf, config.isAntiRecallSelfMsg);
   setSwitch(blockUpdate, config.blockQQNTUpdate);
   setSwitch(messageAnimation, config.enableMessageAnimation);
+  if (reactionSpamMode) reactionSpamMode.value = config.reactionSpamMode;
   setSwitch(shadow, config.enableShadow);
   setSwitch(tip, config.enableTip);
   setSwitch(mentionHighlight, config.enableMentionHighlight);
@@ -195,6 +208,9 @@ export async function renderSettings(container: HTMLElement): Promise<void> {
   antiSelf?.addEventListener('click', () => toggleSettingSwitch(antiSelf, 'isAntiRecallSelfMsg'));
   blockUpdate?.addEventListener('click', () => toggleSettingSwitch(blockUpdate, 'blockQQNTUpdate'));
   messageAnimation?.addEventListener('click', () => toggleSettingSwitch(messageAnimation, 'enableMessageAnimation'));
+  reactionSpamMode?.addEventListener('change', () => {
+    void saveSetting({ reactionSpamMode: reactionSpamMode.value === 'loop' ? 'loop' : 'once' });
+  });
   shadow?.addEventListener('click', () => toggleSettingSwitch(shadow, 'enableShadow'));
   tip?.addEventListener('click', () => toggleSettingSwitch(tip, 'enableTip'));
   mentionHighlight?.addEventListener('click', () => toggleSettingSwitch(mentionHighlight, 'enableMentionHighlight'));

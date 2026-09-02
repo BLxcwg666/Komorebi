@@ -4,6 +4,8 @@ type ReactionPeer = { chatType: number; peerUid: string; guildId: string };
 type ReactionTarget = { msgSeq: string; peer: ReactionPeer };
 
 let lastContextTarget: ReactionTarget | null = null;
+let reactionSpamActive = false;
+let reactionSpamTask = 0;
 
 export function setupReaction(): void {
   observeContextMenuForReactionItem();
@@ -70,14 +72,16 @@ function injectReactionMenuItem(menu: HTMLElement): void {
   item.classList.add('komorebi-reaction-menu-item');
 
   const textNode = findMenuItemTextNode(item);
-  if (textNode) textNode.textContent = '表情轰炸';
-  else item.textContent = '表情轰炸';
+  const label = reactionSpamActive ? '停止表情轰炸' : '表情轰炸';
+  if (textNode) textNode.textContent = label;
+  else item.textContent = label;
 
   const target = lastContextTarget;
   item.addEventListener('click', event => {
     event.stopPropagation();
     event.preventDefault();
-    void runReactionSpam(target);
+    if (reactionSpamActive) stopReactionSpam();
+    else void runReactionSpam(target);
     closeContextMenu(menu);
   }, true);
 
@@ -104,8 +108,20 @@ async function runReactionSpam(target: ReactionTarget | null): Promise<void> {
     return;
   }
 
-  showRepeatToast('表情轰炸进行中…');
-  const result = await window.Komorebi.spamReactions(target.msgSeq, target.peer);
+  const config = await window.Komorebi.getConfig<{ reactionSpamMode?: 'once' | 'loop' }>();
+  const mode = config.reactionSpamMode === 'loop' ? 'loop' : 'once';
+  const task = ++reactionSpamTask;
+  reactionSpamActive = true;
+  showRepeatToast(mode === 'loop' ? '循环表情轰炸进行中，再次右键可停止' : '表情轰炸进行中…');
+  const result = await window.Komorebi.spamReactions(target.msgSeq, target.peer, mode);
+  if (task !== reactionSpamTask) return;
+  reactionSpamActive = false;
   if (!result.ok) showRepeatToast(`表情轰炸失败：${result.error}`);
+  else if (result.stopped) showRepeatToast('表情轰炸已停止');
   else showRepeatToast(`已糊上 ${result.count} 个表情`);
+}
+
+function stopReactionSpam(): void {
+  window.Komorebi.stopReactionSpam();
+  showRepeatToast('正在停止表情轰炸并取消本轮表情…');
 }
